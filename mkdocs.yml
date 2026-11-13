@@ -1,8 +1,8 @@
 site_name: logpipe
 site_description: Streaming log parsing, template learning, LogBERT anomaly detection and cited root-cause analysis.
-site_url: https://niang931.github.io/Log_parser/
-repo_url: https://github.com/Niang931/Log_parser
-repo_name: Niang931/Log_parser
+site_url: https://katovu.github.io/LogPipe/
+repo_url: https://github.com/KatoVu/LogPipe
+repo_name: KatoVu/LogPipe
 edit_uri: edit/main/docs/
 docs_dir: docs
 copyright: logpipe is released under the MIT License. DeepParse/ is Apache-2.0. See THIRD_PARTY_NOTICES.md.

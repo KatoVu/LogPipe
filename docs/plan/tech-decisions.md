@@ -53,7 +53,7 @@
 - `review_batch(id)`: call `get_review_batch`, then for each draft check its rule and naming, merge duplicates, and approve or reject with a reason. End by reminding the human to click Apply in the UI.
 
 ## Implementation order
-Commit after each step once its tests pass. Branch: `worktree-feat-mcp`. No Claude attribution lines. Open the PR against Niang931.
+Commit after each step once its tests pass. Branch: `worktree-feat-mcp`. No Claude attribution lines. Open the PR against KatoVu.
 0. Write `docs/plan/persona.md`, `features.md` and `tech-decisions.md` from this file.
 1. `uv add mcp`. Add the key scope in core, the intake check and the keys route, with tests.
 2. Middleware allowlist, `request.state.key` and the incident status guard, with tests: an mcp key can GET logs, gets 403 on apply, and gets 403 on a status change.

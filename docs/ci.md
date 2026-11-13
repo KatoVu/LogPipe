@@ -62,10 +62,10 @@ Keep the IoT parameters identical to `eval_params` in the baseline; the F1 of a 
 
 ## Repository hygiene
 
-- **Branch protection on `main`** (needs admin on `Niang931/Log_parser`; the ruleset is not a file in the repo):
+- **Branch protection on `main`** (needs admin on `KatoVu/LogPipe`; the ruleset is not a file in the repo):
 
   ```bash
-  gh api -X PUT repos/Niang931/Log_parser/branches/main/protection \
+  gh api -X PUT repos/KatoVu/LogPipe/branches/main/protection \
     --input - <<'JSON'
   {
     "required_status_checks": {"strict": true,
