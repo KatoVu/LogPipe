@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <a href="https://niang931.github.io/Log_parser/"><img alt="Docs" src="https://img.shields.io/badge/docs-niang931.github.io-1e88e5?logo=materialformkdocs&logoColor=white"></a>
+  <a href="https://katovu.github.io/LogPipe/"><img alt="Docs" src="https://img.shields.io/badge/docs-katovu.github.io-1e88e5?logo=materialformkdocs&logoColor=white"></a>
   <img alt="OpenTelemetry" src="https://img.shields.io/badge/OpenTelemetry-OTLP%2FHTTP-425CC7?logo=opentelemetry&logoColor=white">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-%2Fmcp-000000?logo=anthropic&logoColor=white">
   <a href="docs/guides/datadog.md"><img alt="Datadog" src="https://img.shields.io/badge/Datadog-logs-632CA6?logo=datadog&logoColor=white"></a>
@@ -176,7 +176,7 @@ cd agent && go build -o logpipe-agent .
 ./logpipe-agent check && ./logpipe-agent run
 ```
 
-See full guide here: [Install the agent](https://niang931.github.io/Log_parser/getting-started/agent/).
+See full guide here: [Install the agent](https://katovu.github.io/LogPipe/getting-started/agent/).
 
 ## Benchmark
 
@@ -226,12 +226,12 @@ to the settings behind the UI. One flag switches it: `--store mongodb`, or the
 
 | | |
 |---|---|
-| [Getting started](https://niang931.github.io/Log_parser/getting-started/) | install, every way to run it, all commands |
-| [Architecture](https://niang931.github.io/Log_parser/architecture/) | parsing, online learning, LogBERT, server lifecycle, Ask & RCA, MCP, storage, with diagrams |
-| [Benchmarks](https://niang931.github.io/Log_parser/benchmarks/) | results, RCAEval, throughput |
-| [Guides](https://niang931.github.io/Log_parser/guides/code-structure/) | code structure, replacing components, configuration, Datadog, MongoDB, maintenance, CI |
-| [Security](https://niang931.github.io/Log_parser/security/) | threat model and defences |
-| [Design records](https://niang931.github.io/Log_parser/plan/) | personas, feature plans and technical decisions |
+| [Getting started](https://katovu.github.io/LogPipe/getting-started/) | install, every way to run it, all commands |
+| [Architecture](https://katovu.github.io/LogPipe/architecture/) | parsing, online learning, LogBERT, server lifecycle, Ask & RCA, MCP, storage, with diagrams |
+| [Benchmarks](https://katovu.github.io/LogPipe/benchmarks/) | results, RCAEval, throughput |
+| [Guides](https://katovu.github.io/LogPipe/guides/code-structure/) | code structure, replacing components, configuration, Datadog, MongoDB, maintenance, CI |
+| [Security](https://katovu.github.io/LogPipe/security/) | threat model and defences |
+| [Design records](https://katovu.github.io/LogPipe/plan/) | personas, feature plans and technical decisions |
 
 ## Acknowledgements
 
