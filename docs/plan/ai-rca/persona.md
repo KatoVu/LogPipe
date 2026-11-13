@@ -41,7 +41,7 @@ Stores: memory (SQLite-on-demand for queries), ClickHouse, MongoDB (`logpipe/sto
 - Eval: extend `ShopGenerator` with fault modes; deterministic correctness (top hypothesis cites ground-truth template, plus no-fault controls expect "insufficient evidence"); record/replay LLM replies.
 - Override: the Ask box can only tighten (turn approval on); it can't skip approval when the server requires it.
 - Stores: memory + ClickHouse + Mongo. Budget ≈6k tokens, 20–40 lines, 300 chars/line. Pending plans expire after 15 min; relative times are re-resolved at approval.
-- Delivery: one PR from `feat/ai-rca` to Niang931/Log_parser, one commit per milestone, no Claude attribution.
+- Delivery: one PR from `feat/ai-rca` to KatoVu/LogPipe, one commit per milestone, no Claude attribution.
 
 ## Persona
 - **Who**: on-call SRE/ops engineer running logpipe for their own services (web shop, IoT fleet). Reads logs and SQL fluently, and is under time pressure during an outage.

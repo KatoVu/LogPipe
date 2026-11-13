@@ -36,8 +36,8 @@ traces, and can drop or mask lines before they leave the host.
     Needs Go 1.23+.
 
     ```sh
-    git clone https://github.com/Niang931/Log_parser.git
-    cd Log_parser/agent
+    git clone https://github.com/KatoVu/LogPipe.git
+    cd LogPipe/agent
     go build -o logpipe-agent .
     sudo install -m 0755 logpipe-agent /usr/local/bin/   # or keep it anywhere on your PATH
     ```
@@ -147,7 +147,7 @@ logs:
 
 The full reference (every rule type, Docker labels, syslog listeners, how rotation and the
 buffer behave) is in
-[agent/README.md](https://github.com/Niang931/Log_parser/blob/main/agent/README.md).
+[agent/README.md](https://github.com/KatoVu/LogPipe/blob/main/agent/README.md).
 
 !!! tip "No agent? Use OpenTelemetry"
     Anything that sends OTLP/HTTP logs works too: point an OpenTelemetry Collector's `otlphttp`

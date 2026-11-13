@@ -16,8 +16,8 @@ CPU is enough for everything else, including LogBERT training on the demo and ev
 ## Python environment
 
 ```sh
-git clone git@github.com:Niang931/Log_parser.git
-cd Log_parser
+git clone git@github.com:KatoVu/LogPipe.git
+cd LogPipe
 make setup          # = uv sync --group dev, and creates .env from .env.example
 ```
 

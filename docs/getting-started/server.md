@@ -7,7 +7,7 @@ ClickHouse by default, or in MongoDB. You can run the image we ship or build it 
 Either way, start with the repository and a `.env`:
 
 ```sh
-git clone git@github.com:Niang931/Log_parser.git && cd Log_parser
+git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 cp .env.example .env    # change the change-me passwords
 ```
 

@@ -4,7 +4,7 @@ import { Logo } from '../components/Logo'
 import { Panel } from '../components/Panel'
 import { DEMO, DOCS, REPO } from '../links'
 
-const SETUP = [`git clone ${REPO}.git`, 'cd Log_parser', 'uv sync --group dev', DEMO]
+const SETUP = [`git clone ${REPO}.git`, 'cd LogPipe', 'uv sync --group dev', DEMO]
 
 const COLUMNS = [
   { title: 'Product', links: [['Parsing', '#parse'], ['Learning', '#learn'], ['Detection', '#detect'], ['Root cause', '#explain'], ['Backends', '#run']] },

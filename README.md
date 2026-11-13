@@ -125,7 +125,7 @@ unless `LOGPIPE_ADMIN_PASSWORD` is set.
 ### Using the shipped container
 
 ```sh
-git clone git@github.com:Niang931/Log_parser.git && cd Log_parser
+git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 cp .env.example .env             # set the passwords
 docker compose pull server       # ghcr.io/katovu/logpipe-server:latest
 docker compose up -d clickhouse server
@@ -147,7 +147,7 @@ docker run -d --name logpipe-server --restart unless-stopped -p 8080:8080 \
 Needs [uv](https://docs.astral.sh/uv/), Node 20+ and Docker (for ClickHouse).
 
 ```sh
-git clone git@github.com:Niang931/Log_parser.git && cd Log_parser
+git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 make setup                                   # uv sync + .env
 cd web && npm ci && npm run build && cd ..   # UI into logpipe/server/static
 docker compose up -d clickhouse

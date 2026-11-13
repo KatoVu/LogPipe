@@ -1,7 +1,7 @@
 # Code structure
 
 ```
-Log_parser/
+LogPipe/
 ├── logpipe/                 the product (Python package, CLI `logpipe`)
 ├── DeepParse/               mask synthesis, Drain, chat providers, web-chat scraper (package `deepparse`)
 ├── agent/                   logpipe-agent, the Go collector

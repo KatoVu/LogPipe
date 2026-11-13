@@ -3,7 +3,7 @@
 ## Everyday workflow
 
 ```sh
-git switch -c feat/<name>            # features go on a branch; PRs to Niang931/Log_parser
+git switch -c feat/<name>            # features go on a branch; PRs to KatoVu/LogPipe
 make format && make lint             # ruff (CI also runs ruff format --check)
 make test-fast                       # unit tests without model training
 make test                            # everything but integration
