@@ -20,7 +20,7 @@ traces, and can drop or mask lines before they leave the host.
       -v /var/run/docker.sock:/var/run/docker.sock:ro \
       -v logpipe-agent:/var/lib/logpipe-agent \
       -v $PWD/conf.d:/etc/logpipe-agent/conf.d \
-      ghcr.io/niang931/logpipe-agent:latest
+      ghcr.io/katovu/logpipe-agent:latest
     ```
 
     - The image is built by the `Images` workflow for amd64, arm64 and arm/v7. To build it

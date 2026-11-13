@@ -127,7 +127,7 @@ unless `LOGPIPE_ADMIN_PASSWORD` is set.
 ```sh
 git clone git@github.com:Niang931/Log_parser.git && cd Log_parser
 cp .env.example .env             # set the passwords
-docker compose pull server       # ghcr.io/niang931/logpipe-server:latest
+docker compose pull server       # ghcr.io/katovu/logpipe-server:latest
 docker compose up -d clickhouse server
 docker compose logs server | grep -i password
 ```
@@ -139,7 +139,7 @@ If you already run ClickHouse, run the image on its own:
 ```sh
 docker run -d --name logpipe-server --restart unless-stopped -p 8080:8080 \
   --env-file .env -e CLICKHOUSE_HOST=clickhouse.example \
-  -v logpipe-server:/app/artifacts ghcr.io/niang931/logpipe-server:latest
+  -v logpipe-server:/app/artifacts ghcr.io/katovu/logpipe-server:latest
 ```
 
 ### From source
@@ -164,7 +164,7 @@ Ship a host's logs to the server with `logpipe-agent`
 docker run -d --name logpipe-agent --restart unless-stopped \
   -e LOGPIPE_ENDPOINT=http://logpipe.example:8080 -e LOGPIPE_API_KEY=lp_xxx -e LOGPIPE_HOSTNAME=$(hostname) \
   -v /var/log:/var/log:ro -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v logpipe-agent:/var/lib/logpipe-agent ghcr.io/niang931/logpipe-agent:latest
+  -v logpipe-agent:/var/lib/logpipe-agent ghcr.io/katovu/logpipe-agent:latest
 ```
 
 or from source (Go 1.23+), no root needed

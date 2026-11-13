@@ -16,7 +16,7 @@ export function installCommands(token: string) {
       "  -v /var/log:/var/log:ro \\",
       "  -v /var/run/docker.sock:/var/run/docker.sock:ro \\",
       "  -v logpipe-agent:/var/lib/logpipe-agent \\",
-      "  ghcr.io/minhthien2103/logpipe-agent:latest",
+      "  ghcr.io/katovu/logpipe-agent:latest",
     ].join("\n"),
     binary: [
       `logpipe-agent init --endpoint ${endpoint} --api-key ${token}`,

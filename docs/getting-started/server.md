@@ -13,7 +13,7 @@ cp .env.example .env    # change the change-me passwords
 
 ## Shipped container
 
-CI builds `ghcr.io/niang931/logpipe-server` and publishes it on every push to `main` (`latest`)
+CI builds `ghcr.io/katovu/logpipe-server` and publishes it on every push to `main` (`latest`)
 and every `v*` tag. The UI is built into the image.
 
 ```sh
@@ -38,7 +38,7 @@ flags override the values in `.env`:
 docker run -d --name logpipe-server --restart unless-stopped -p 8080:8080 \
   --env-file .env -e CLICKHOUSE_HOST=clickhouse.example -e CLICKHOUSE_PORT=8123 \
   -v logpipe-server:/app/artifacts \
-  ghcr.io/niang931/logpipe-server:latest
+  ghcr.io/katovu/logpipe-server:latest
 ```
 
 Templates and models live in `/app/artifacts`, and logs and the admin password in ClickHouse.
