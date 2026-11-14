@@ -2,13 +2,13 @@ import { ButtonLink } from '../components/Button'
 import { Container } from '../components/Container'
 import { Logo } from '../components/Logo'
 import { Panel } from '../components/Panel'
-import { DEMO, DOCS, REPO } from '../links'
+import { DEMO, DOCS, EMAIL, REPO } from '../links'
 
 const SETUP = [`git clone ${REPO}.git`, 'cd LogPipe', 'uv sync --group dev', DEMO]
 
 const COLUMNS = [
-  { title: 'Product', links: [['Parsing', '#parse'], ['Learning', '#learn'], ['Detection', '#detect'], ['Root cause', '#explain'], ['Backends', '#run']] },
-  { title: 'Resources', links: [['Docs', DOCS], ['GitHub', REPO], ['Issues', `${REPO}/issues`]] },
+  { title: 'Product', links: [['Parsing', '#parse'], ['Learning', '#learn'], ['Detection', '#detect'], ['Root cause', '#explain'], ['Backends', '#run'], ['Services', '#services']] },
+  { title: 'Resources', links: [['Docs', DOCS], ['GitHub', REPO], ['Issues', `${REPO}/issues`], ['Talk to us', EMAIL]] },
 ]
 
 export function Footer() {

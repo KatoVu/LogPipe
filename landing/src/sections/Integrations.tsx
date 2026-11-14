@@ -35,7 +35,7 @@ function ToolRow({ name, icon, note, invert }: Tool) {
 /** A line's path as a route with one stop per stage (the page's rail, turned sideways on desktop). */
 export function Integrations() {
   return (
-    <Section id="run" route="ink" rail="last">
+    <Section id="run" route="ink">
       <header className="grid gap-x-8 gap-y-5 lg:grid-cols-12">
         <div className="lg:col-span-6"><Heading id="run-h">Works with what you already run</Heading></div>
         <div className="lg:col-span-5 lg:col-start-8"><Lead>Kafka or an in-memory queue, ClickHouse or MongoDB, any LLM or none at all.</Lead></div>

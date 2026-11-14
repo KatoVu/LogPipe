@@ -4,6 +4,7 @@ import { Hero } from './sections/Hero'
 import { Integrations } from './sections/Integrations'
 import { Learn } from './sections/Learn'
 import { Nav } from './sections/Nav'
+import { Services } from './sections/Services'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Explain />
         <Ask />
         <Integrations />
+        <Services />
       </main>
       <Footer />
     </>

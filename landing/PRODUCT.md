@@ -10,7 +10,7 @@ web
 SRE and platform engineers who own noisy service logs (nginx, postgres, Java services) and need to parse, watch and explain them without writing regex or shipping logs to a vendor.
 
 ## Product Purpose
-logpipe is an open-source log pipeline. It parses known lines on a frozen Drain tree in under a millisecond, learns unknown formats in the background (group by shape, LLM names the fields, publish and backfill), flags anomalies per service with LogBERT, and answers "why did it break?" in plain language citing the exact log lines. The landing page exists to get visitors to the GitHub repo or to run `uv run logpipe showcase`.
+logpipe is an open-source log pipeline. It parses known lines on a frozen Drain tree in under a millisecond, learns unknown formats in the background (group by shape, LLM names the fields, publish and backfill), flags anomalies per service with LogBERT, and answers "why did it break?" in plain language citing the exact log lines. The landing page exists to get visitors to the GitHub repo or to run `uv run logpipe showcase`, or to contact us for a managed setup (hosting, install, customisation, maintenance).
 
 ## Positioning
 Self-learning: unknown lines are kept as PENDING and turned into templates automatically, never dropped. Root-cause answers are read-only and cite the lines that prove them.
@@ -29,7 +29,8 @@ Self-learning: unknown lines are kept as PENDING and turned into templates autom
 ## Evidence on Hand
 - Real product screenshots in `public/screenshots/` (Log Explorer, Templates, incident, root cause, ranking, Ask). Show them uncropped at native aspect ratio.
 - Third-party logos in `public/assets/icons/` with credits in `icons-credits.json`.
-- No customers, testimonials, pricing or benchmarks exist; do not invent them.
+- Managed plans: Base $30/month and Advanced $45/month (limits live in `src/sections/Services.tsx`).
+- No customers, testimonials or benchmarks exist; do not invent them.
 
 ## Product Principles
 - Prove with the real UI, not with claims.

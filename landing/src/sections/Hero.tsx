@@ -1,7 +1,7 @@
 import { ButtonLink } from '../components/Button'
 import { Container } from '../components/Container'
 import { Screenshot } from '../components/Screenshot'
-import { DOCS, REPO } from '../links'
+import { REPO } from '../links'
 import { SHOTS } from '../shots'
 
 export function Hero() {
@@ -16,8 +16,8 @@ export function Hero() {
             Parses known lines in under a millisecond, learns new formats on its own and tells you why things broke.
           </p>
           <div className="mt-10 flex flex-wrap justify-center gap-3">
-            <ButtonLink href={REPO} arrow>View on GitHub</ButtonLink>
-            <ButtonLink href={DOCS} variant="secondary">Read the docs</ButtonLink>
+            <ButtonLink href="#services" arrow>Get it set up for you</ButtonLink>
+            <ButtonLink href={REPO} variant="secondary">Self-host from GitHub</ButtonLink>
           </div>
         </div>
         <Screenshot {...SHOTS.explorer} priority className="mt-16 md:mt-20" />

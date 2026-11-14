@@ -1,14 +1,14 @@
 import { useState } from 'react'
-import { ButtonLink } from '../components/Button'
 import { Container } from '../components/Container'
 import { MenuIcon } from '../components/icons'
 import { Logo } from '../components/Logo'
-import { DOCS, REPO } from '../links'
+import { DOCS } from '../links'
 
 const LINKS = [
   ['Parsing', '#parse'],
   ['Detection', '#detect'],
   ['Root cause', '#explain'],
+  ['Services', '#services'],
   ['Docs', DOCS],
 ] as const
 
@@ -26,7 +26,6 @@ export function Nav() {
             ))}
           </ul>
         </nav>
-        <ButtonLink href={REPO} className="ml-auto h-9! px-4! text-sm! max-md:hidden">View on GitHub</ButtonLink>
         <button
           type="button"
           className="-mr-2 ml-auto grid size-10 cursor-pointer place-items-center rounded-sm text-ink md:hidden"
@@ -44,7 +43,6 @@ export function Nav() {
             {LINKS.map(([label, href]) => (
               <a key={label} href={href} onClick={() => setOpen(false)} className="py-3 text-lg">{label}</a>
             ))}
-            <ButtonLink href={REPO} className="mt-3 mb-2">View on GitHub</ButtonLink>
           </Container>
         </nav>
       )}
