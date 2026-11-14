@@ -50,9 +50,11 @@ healthy() {
 }
 
 # Through Traefik, as a visitor would arrive. -k: the certificate is Traefik's
-# self-signed default until DNS points here.
+# self-signed default until DNS points here. Retries: Traefik adds the route a
+# moment after the container turns healthy, and 404s until then.
 reachable() {
     curl -fsSk -o /dev/null --max-time 10 \
+        --retry 10 --retry-delay 2 --retry-max-time 60 --retry-all-errors \
         --resolve "${site_domain}:443:127.0.0.1" "https://${site_domain}/"
 }
 
