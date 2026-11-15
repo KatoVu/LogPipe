@@ -5,8 +5,8 @@
 | Tool | Version | Needed for |
 |---|---|---|
 | [uv](https://docs.astral.sh/uv/) | recent | everything in Python (it installs Python 3.13 itself) |
-| Docker + Compose | recent | ClickHouse, MongoDB, Kafka, the platform profile |
-| Go | 1.23+ | building `logpipe-agent` from `agent/` (the showcase does it for you) |
+| Docker + Compose | recent | ClickHouse, MongoDB, Kafka, the platform profile, the showcase's agent |
+| Go | 1.23+ | building `logpipe-agent` from `agent/` |
 | Node | 22+ | developing the web UI in `web/` (the Docker image builds it for you) |
 | Chromium or Camoufox | — | only for `llm:web:<site>`: driving your signed-in web chat |
 | A GPU | — | only for `LLM_BACKEND=hf` (the fine-tuned mask model) |

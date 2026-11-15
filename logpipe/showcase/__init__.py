@@ -12,6 +12,7 @@ import json
 import os
 import secrets
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -58,18 +59,13 @@ class Api:
         self("/api/auth/login", {"password": password})
 
 
-def find_agent(out: Path) -> str:
-    """A logpipe-agent binary: built from ./agent with Go, else the one on PATH."""
-    if shutil.which("go") and Path("agent/go.mod").exists():
-        out.parent.mkdir(parents=True, exist_ok=True)
-        print(f"{D}$ go build -o {out} ./agent{R}", flush=True)
-        subprocess.run(["go", "build", "-o", str(out.resolve()), "."], cwd="agent", check=True)
-        return str(out)
-    if found := shutil.which("logpipe-agent"):
-        return found
-    raise SystemExit(
-        "logpipe-agent not found: install Go (to build ./agent) or put logpipe-agent on PATH"
-    )
+AGENT = "logpipe-showcase-agent"  # the agent's container name
+IMAGE = "ghcr.io/katovu/logpipe-agent:latest"
+
+
+def need_docker() -> None:
+    if not shutil.which("docker"):
+        raise SystemExit("the showcase's agent runs in Docker: install Docker first")
 
 
 def _fit(text: str, indent: int) -> str:
@@ -264,7 +260,7 @@ def run(
         ).command("DROP DATABASE IF EXISTS logpipe_showcase")
     shutil.rmtree(ROOT, ignore_errors=True)
     (ROOT / "logs").mkdir(parents=True)
-    agent_bin = find_agent(ROOT / "bin" / "logpipe-agent")
+    need_docker()
     url = f"http://localhost:{port}"
     api = Api(url)
     procs: list[subprocess.Popen] = []
@@ -292,10 +288,13 @@ def run(
         api.login(password)
         # Shorter thresholds so the tour's new service is drafted within a minute or two.
         api("/api/settings", {"draft_lines": 200, "draft_after_minutes": 2}, "PUT")
-        _tour(Tour(api, url, auto), gen, agent_bin, procs, password, dd)
+        _tour(Tour(api, url, auto), gen, procs, password, dd)
     except KeyboardInterrupt:
         print("\nstopping")
     finally:
+        # uv forwards Ctrl+C on top of the terminal's, so a second one would cut the cleanup short.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        subprocess.run(["docker", "rm", "-f", AGENT], check=False, capture_output=True)
         gen.stop()
         if dd:
             dd.cleanup()
@@ -311,17 +310,16 @@ def run(
 def _tour(
     t: Tour,
     gen: ShopGenerator,
-    agent_bin: str,
     procs: list[subprocess.Popen],
     password: str,
     dd: ShowcaseDatadog | None = None,
 ) -> None:
     api, url = t.api, t.url
-    conf = ROOT / "agent"
+    lpa = ["docker", "exec", AGENT, "logpipe-agent"]
 
     def agent(*args: str) -> None:
-        print(f"  {D}$ logpipe-agent -c {conf} {' '.join(args)}{R}")
-        subprocess.run([agent_bin, "-c", str(conf), *args], check=True, stdout=subprocess.DEVNULL)
+        print(f"  {D}$ {shlex.join([*lpa, *args])}{R}")
+        subprocess.run([*lpa, *args], check=True, stdout=subprocess.DEVNULL)
 
     t.act(
         0,
@@ -358,35 +356,46 @@ def _tour(
         [
             f"In the UI: {B}Agents → Add an agent{R} → create a key and copy it.",
             "Paste the key here and press Enter (or just press Enter and I'll create one).",
-            "Then I install the agent as your user, no sudo, and track the three files.",
+            "Then you start the agent container and track the files, with the commands I print.",
         ],
     )
     token = "" if t.auto or not sys.stdin.isatty() else input("  API key: ").strip()
     if not token.startswith("lp_"):
         token = api("/api/keys", {"name": "showcase"})["token"]
         print("  created a key named 'showcase'")
-    agent("init", "--endpoint", url, "--api-key", token, "--hostname", HOST)
-    for svc in ("nginx", "shop-api", "postgres"):
-        path, source, multi = FILES[svc]
-        extra = ["--multiline", multi] if multi else []
-        agent(
-            "track",
-            str((ROOT / "logs" / path).resolve()),
-            "--service",
-            svc,
-            "--source",
-            source,
-            "--start",
-            "beginning",
-            *extra,
-        )
-    procs.append(
-        subprocess.Popen(
-            [agent_bin, "-c", str(conf), "run"],
-            stdout=(ROOT / "agent.log").open("w"),
-            stderr=subprocess.STDOUT,
+    logs = str((ROOT / "logs").resolve())
+    q = shlex.quote
+    run = [  # one line per flag, so it prints like the install command in the docs
+        ["docker", "run", "-d", "--rm", "--name", AGENT],
+        ["--add-host=host.docker.internal:host-gateway"],  # reach this machine's server (Linux, macOS)
+        ["-e", f"LOGPIPE_ENDPOINT={url.replace('localhost', 'host.docker.internal')}"],
+        ["-e", f"LOGPIPE_API_KEY={token}"],
+        ["-e", f"LOGPIPE_HOSTNAME={HOST}"],
+        ["-v", f"{logs}:{logs}:ro"],  # same path inside, so track takes the host's paths
+        [IMAGE],
+    ]  # fmt: skip
+    subprocess.run(
+        ["docker", "rm", "-f", AGENT], check=False, capture_output=True
+    )  # a previous run's
+
+    def start_agent() -> None:
+        subprocess.run([a for part in run for a in part], check=True, capture_output=True)
+
+    t.say(
+        "Start the agent container: run this in another terminal (it pulls the image first):", G, 2
+    )
+    print(
+        " \\\n".join(
+            f"  {'' if i == 0 else '  '}{' '.join(q(a) for a in part)}"
+            for i, part in enumerate(run)
         )
     )
+    t.say(f"Its own log: docker logs -f {AGENT}", D, 2)
+
+    def connected() -> bool:
+        return any(a["hostname"] == HOST and a["online"] for a in api("/api/agents")["agents"])
+
+    t.wait(f"agent {HOST} connected (see it on the Agents page)", connected, do=start_agent)
 
     def online() -> bool:
         agents = api("/api/agents")["agents"]
@@ -395,7 +404,39 @@ def _tour(
             for a in agents
         )
 
-    t.wait(f"agent {HOST} online with 3 sources (see it appear on the Agents page)", online)
+    shop = ("nginx", "shop-api", "postgres")
+
+    def track(svc: str) -> list[str]:
+        path, source, multi = FILES[svc]
+        return [
+            "track",
+            str((ROOT / "logs" / path).resolve()),
+            "--service",
+            svc,
+            "--source",
+            source,
+            "--start",
+            "beginning",
+            *(["--multiline", multi] if multi else []),
+        ]
+
+    def track_all() -> None:
+        for svc in shop:
+            subprocess.run([*lpa, *track(svc)], check=False, capture_output=True)
+
+    t.say(
+        text=(
+            "The agent is running with no sources. Track the three files: run these in another"
+            " terminal (the agent picks each one up by itself, no restart):"
+        ),
+        style=G,
+        indent=2,
+        wrap=True,
+    )
+    print(f"  alias lpa={shlex.quote(shlex.join(lpa))}")
+    for svc in shop:
+        print(f"  lpa {shlex.join(track(svc))}")
+    t.wait(f"agent {HOST} online with 3 sources (see it on the Agents page)", online, do=track_all)
     t.pause()
 
     t.act(
