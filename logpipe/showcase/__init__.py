@@ -260,7 +260,7 @@ def run(
             "llm_kind": "offline",
             "server_port": port or 8080,
         }
-    a |= {"data_dir": str(ROOT / "server"), "with_demo": False}
+    a |= {"data_dir": str(ROOT / "server")}
     services, [cmd] = plan(a)
     port = int(a["server_port"])
     dd = ShowcaseDatadog(HOST) if datadog else None
@@ -272,6 +272,8 @@ def run(
     password = settings.server.admin_password or secrets.token_urlsafe(9)
     # The server runs as a child process: its settings travel as environment variables.
     env = os.environ | {"CLICKHOUSE_DB": "logpipe_showcase", "LOGPIPE_ADMIN_PASSWORD": password}
+    if a.get("llm_kind") == "web":
+        env["WEB_BROWSER"] = a["browser"]  # was the --browser flag
     if dd:
         env |= dd.env(f"http://localhost:{port}")
     if a["store"] == "clickhouse":  # a fresh database every run

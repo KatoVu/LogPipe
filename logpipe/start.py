@@ -126,10 +126,10 @@ def ask_password() -> str:
             print("  they don't match")
 
 
-def ask_setup(saved: dict) -> dict:
+def ask_setup(saved: dict, mode: str | None = None) -> dict:
     """The questions; returns the answers (saved as next time's defaults)."""
     a: dict = {}
-    a["mode"] = choose(
+    a["mode"] = mode or choose(
         "What do you want to run?",
         [
             ("pipeline", "the pipeline on your own log files"),
