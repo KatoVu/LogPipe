@@ -23,7 +23,7 @@ export function installCommands(token: string) {
       'export PATH="$HOME/.local/bin:$PATH"',
       `logpipe-agent init --endpoint ${endpoint} --api-key ${token}`,
       "logpipe-agent track '/var/log/myapp/*.log' --service myapp --auto-multiline",
-      "logpipe-agent check && logpipe-agent run",
+      "logpipe-agent check && logpipe-agent service install",
     ].join("\n"),
   };
 }

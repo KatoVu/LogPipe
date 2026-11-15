@@ -174,7 +174,7 @@ curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh
 export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
-logpipe-agent check && logpipe-agent run
+logpipe-agent check && logpipe-agent service install   # background, starts at boot
 ```
 
 (from source: `cd agent && go build -o logpipe-agent .`)

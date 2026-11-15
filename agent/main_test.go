@@ -75,3 +75,29 @@ func TestUntrackRefusesRemote(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestServiceFile(t *testing.T) {
+	path, body, err := serviceFile("linux", false, "/home/u/.local/bin/logpipe-agent", "/home/u/.config/logpipe-agent", "/home/u")
+	if err != nil || path != "/home/u/.config/systemd/user/logpipe-agent.service" ||
+		!strings.Contains(body, `ExecStart="/home/u/.local/bin/logpipe-agent" -c "/home/u/.config/logpipe-agent" run`) ||
+		!strings.Contains(body, "WantedBy=default.target") {
+		t.Fatalf("linux user: %v %s\n%s", err, path, body)
+	}
+	if path, body, _ := serviceFile("linux", true, "/usr/local/bin/logpipe-agent", "/etc/logpipe-agent", "/root"); path != "/etc/systemd/system/logpipe-agent.service" || !strings.Contains(body, "WantedBy=multi-user.target") {
+		t.Fatalf("linux root: %s\n%s", path, body)
+	}
+	path, body, _ = serviceFile("darwin", false, "/Users/a&b/.local/bin/logpipe-agent", "/Users/a&b/cfg", "/Users/a&b")
+	if path != "/Users/a&b/Library/LaunchAgents/io.logpipe.agent.plist" || !strings.Contains(body, "<string>/Users/a&amp;b/.local/bin/logpipe-agent</string>") {
+		t.Fatalf("darwin: %s\n%s", path, body)
+	}
+	if _, _, err := serviceFile("windows", false, "x", "y", "z"); err == nil {
+		t.Fatal("windows should be unsupported")
+	}
+}
+
+func TestServiceNeedsInit(t *testing.T) {
+	var out bytes.Buffer
+	if err := dispatch(t.TempDir(), "service", []string{"install"}, &out); err == nil || !strings.Contains(err.Error(), "init") {
+		t.Fatalf("want init error, got %v", err)
+	}
+}

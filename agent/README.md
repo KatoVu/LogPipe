@@ -34,7 +34,7 @@ export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without roo
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent check
-logpipe-agent run
+logpipe-agent service install   # or `run` to stay in the foreground
 ```
 
 `LOGPIPE_AGENT_VERSION=v1.0.1` pins a release, `LOGPIPE_AGENT_INSTALL_DIR` changes where it goes,
@@ -42,40 +42,10 @@ and `LOGPIPE_AGENT_BASE_URL` points at a mirror holding the release files. Witho
 download `logpipe-agent_<os>_<arch>.tar.gz` and `checksums.txt` from the
 [releases page](https://github.com/KatoVu/LogPipe/releases). From source: `cd agent && go build -o logpipe-agent .`
 
-To keep it running after a reboot, a systemd user unit is enough
-(`~/.config/systemd/user/logpipe-agent.service`, then `systemctl --user enable --now logpipe-agent`
-and `loginctl enable-linger $USER`):
-
-```ini
-[Unit]
-Description=logpipe-agent
-After=network-online.target
-
-[Service]
-ExecStart=%h/.local/bin/logpipe-agent run
-Restart=always
-
-[Install]
-WantedBy=default.target
-```
-
-On macOS, a launchd agent does the same (`~/Library/LaunchAgents/io.logpipe.agent.plist`, then
-`launchctl load -w` on it; replace `YOU`, launchd needs absolute paths):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>io.logpipe.agent</string>
-  <key>ProgramArguments</key>
-  <array><string>/Users/YOU/.local/bin/logpipe-agent</string><string>run</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>/tmp/logpipe-agent.log</string>
-</dict>
-</plist>
-```
+To keep it running in the background, `logpipe-agent service install` writes and starts a systemd
+user unit (Linux) or a launchd agent (macOS) pointing at this binary and config directory; as root it
+installs a system-wide one. On Linux as a normal user, also run `loginctl enable-linger $USER` so it
+keeps running after you log out. `service uninstall` removes it.
 
 No sudo needed. As a normal user the config lives in `~/.config/logpipe-agent` (offsets and the
 send buffer in its `run/`); as root it is `/etc/logpipe-agent`. `-c DIR` (or
@@ -91,6 +61,7 @@ group, so add yourself once instead of running the agent as root:
 |---|---|
 | `init --endpoint URL [--api-key KEY] [--hostname H]` | write `agent.yaml` |
 | `run` | run in the foreground; reloads by itself when any config file changes |
+| `service install` / `uninstall` | run it in the background at boot: systemd unit (user, or system as root) or launchd agent |
 | `track TARGET [flags]` | add a source to `conf.d/<service>.yaml` |
 | `untrack TARGET` | remove it (sources pushed from the UI are removed in the UI) |
 | `list` | every source and its rules |

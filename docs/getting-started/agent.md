@@ -72,6 +72,7 @@ logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-
 logpipe-agent track journald:nginx.service --service nginx --source nginx
 logpipe-agent check        # validates config, counts matching files, tests the server and key
 logpipe-agent run          # foreground; reloads by itself when a config file changes
+logpipe-agent service install   # ...or in the background, started at boot
 ```
 
 The host appears on the **Agents** page within a second of connecting.
@@ -86,6 +87,7 @@ The host appears on the **Agents** page within a second of connecting.
 | `list` | every source and its rules |
 | `check` | validate the config, the files and the connection |
 | `run` | run in the foreground |
+| `service install` / `service uninstall` | run it in the background at boot (systemd or launchd) |
 | `status` | what the running agent is doing: files, line counts, send errors, buffer size |
 | `config show` | effective config, API key redacted |
 | `config get KEY` / `config set KEY VALUE` | read or change `agent.yaml`, keeping comments |
@@ -111,52 +113,20 @@ sources across container restarts.
 
 ## Run in the background (binary)
 
-`logpipe-agent run` stays in the foreground; let the OS keep it running and restart it after a
-crash or reboot.
-
-**Linux, as your user** (the installer's `~/.local/bin`, no root):
-
-```ini title="~/.config/systemd/user/logpipe-agent.service"
-[Unit]
-Description=logpipe-agent
-After=network-online.target
-
-[Service]
-ExecStart=%h/.local/bin/logpipe-agent run
-Restart=always
-
-[Install]
-WantedBy=default.target
-```
+`logpipe-agent run` stays in the foreground. `service install` hands it to the OS instead, so it
+starts at boot and restarts after a crash. It uses the binary's own path and the config directory
+from `init`:
 
 ```sh
-systemctl --user enable --now logpipe-agent
-loginctl enable-linger $USER   # keep it running when you are logged out
-journalctl --user -u logpipe-agent -f
+logpipe-agent service install     # Linux: systemd user unit, macOS: launchd agent; as root: system-wide
+loginctl enable-linger $USER      # Linux as a normal user: keep it running after you log out
+logpipe-agent service uninstall   # stop it and remove the unit
 ```
 
-**macOS** (replace `YOU` with your user name; launchd needs absolute paths):
+Logs: `journalctl --user -u logpipe-agent -f` (`journalctl -u logpipe-agent -f` as root), or
+`agent.log` in the config directory on macOS. `status` works as usual.
 
-```xml title="~/Library/LaunchAgents/io.logpipe.agent.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>io.logpipe.agent</string>
-  <key>ProgramArguments</key>
-  <array><string>/Users/YOU/.local/bin/logpipe-agent</string><string>run</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>/tmp/logpipe-agent.log</string>
-</dict>
-</plist>
-```
-
-```sh
-launchctl load -w ~/Library/LaunchAgents/io.logpipe.agent.plist
-```
-
-**Linux, system-wide** as a dedicated `logpipe` user. Install as root so the binary is in
+**By hand, as a dedicated `logpipe` user** (system-wide, not root). Install as root so the binary is in
 `/usr/local/bin`, where the unit expects it:
 
 ```sh
