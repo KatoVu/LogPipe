@@ -114,6 +114,16 @@ def test_startup_sets_the_default_once_and_env_resets():
     assert Auth(control).login("t", "from-the-env") and not Auth(control).login("t", "mine-now!")
 
 
+def test_the_default_is_set_even_when_longer_passwords_are_required(monkeypatch):
+    monkeypatch.setenv("LOGPIPE_MIN_PASSWORD_LENGTH", "12")
+    get_settings.cache_clear()
+    control = ControlStore()
+    assert Auth(control).ensure(None) == DEFAULT_PASSWORD
+    assert Auth(control).must_change
+    with pytest.raises(ValueError):
+        Auth(control).set_password("eleven-char")
+
+
 def test_the_default_password_only_lets_you_change_it(env):
     control, client, agent = env
     Auth(control).set_password(DEFAULT_PASSWORD)

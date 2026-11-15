@@ -60,6 +60,9 @@ class Auth:
     def set_password(self, password: str) -> None:
         if len(password) < (n := get_settings().server.min_password_length):
             raise ValueError(f"the password needs at least {n} characters")
+        self._store(password)
+
+    def _store(self, password: str) -> None:
         self.control.put(
             "auth",
             "admin",
@@ -81,7 +84,7 @@ class Auth:
             return None
         if self.configured:
             return None
-        self.set_password(DEFAULT_PASSWORD)
+        self._store(DEFAULT_PASSWORD)  # skips the length check: it must be replaced anyway
         return DEFAULT_PASSWORD
 
     def blocked_for(self, client: str) -> float:
