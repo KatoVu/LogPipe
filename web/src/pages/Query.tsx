@@ -1,12 +1,12 @@
-// Query: ask in plain English, build a question as a sentence of pills (measure, time, filters,
-// split), or write SQL. Saved queries sit in a menu; the schema list shows on the SQL tab.
-import { useEffect, useState } from "react";
+// Query: ask in plain English, build a question in three plain steps (what to show, which lines,
+// one row per what), or write SQL. Saved queries sit in a menu; the schema list shows on the SQL tab.
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type QueryResult } from "../api";
 import { AutoChart, RANGES, TimeRange } from "../charts";
 import { AskPanel } from "../ask";
-import { Card, Empty, PageHead, Pop, Segmented, fmt } from "../ui";
+import { Card, Empty, PageHead, Pop, fmt } from "../ui";
 
 interface Schema {
   engine: string; table: string; payload_access: string; measures: string[]; ops: string[];
@@ -17,12 +17,12 @@ interface Filter { field: string; op: string; value: string }
 interface Spec { minutes: number; filters: Filter[]; measure: { fn: string; field?: string }; group_by: string[]; over_time: boolean; limit: number }
 
 const BASE = ["host", "service", "source", "level", "status", "template_id", "message"];
-const MEASURE_LABEL: Record<string, string> = { lines: "The matching lines", count: "Count of lines", count_distinct: "Distinct values of", avg: "Average of", min: "Minimum of", max: "Maximum of", sum: "Sum of", p95: "95th percentile of" };
 type Tab = "ask" | "builder" | "sql";
 const TABS: [Tab, string][] = [["ask", "Ask"], ["builder", "Builder"], ["sql", "SQL"]];
 const EMPTY: Spec = { minutes: 60, filters: [], measure: { fn: "count" }, group_by: [], over_time: false, limit: 100 };
+const START: Spec = { ...EMPTY, measure: { fn: "lines" } };  // what a new visitor wants first: the lines
 
-const FIELD_LABEL: Record<string, string> = { template_id: "kind of line", message: "message text" };
+const FIELD_LABEL: Record<string, string> = { template_id: "kind of line", message: "message text", lines: "lines" };
 const label = (f: string) => FIELD_LABEL[f] ?? f;
 const OP_LABEL: Record<string, string> = { "=": "is", "!=": "is not", contains: "contains", "not contains": "doesn't contain", ">": "above", "<": "below", in: "is one of" };
 const RANGE_WORDS: Record<string, string> = { "15m": "last 15 minutes", "1h": "last hour", "4h": "last 4 hours", "1d": "last day", "7d": "last 7 days" };
@@ -94,15 +94,48 @@ function FilterEdit({ init, fields, ops, minutes, onDone }: { init?: Filter; fie
   );
 }
 
-function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpec: (s: Spec) => void; schema?: Schema; onRun: () => void; running: boolean }) {
+type Mode = "lines" | "count" | "trend" | "number";
+const ICON: Record<Mode, string> = {
+  lines: "M4 6h16M4 12h16M4 18h10",
+  count: "M9 4L7 20M17 4l-2 16M4 9h16M3 15h16",
+  trend: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  number: "M18 5H6l6 7-6 7h12",
+};
+const MODES: [Mode, string, string][] = [
+  ["lines", "Log lines", "The lines themselves"],
+  ["count", "How many", "Count the matching lines"],
+  ["trend", "Over time", "How that count changes"],
+  ["number", "A number", "Average, max… of a field"],
+];
+const STATS: [string, string][] = [["avg", "Average"], ["max", "Maximum"], ["min", "Minimum"], ["sum", "Sum"], ["p95", "95th percentile"], ["count_distinct", "Different values of"]];
+const SPLITS = ["service", "host", "level", "template_id"];
+
+// a field that is probably a number (duration_ms, bytes, …) beats the alphabetically first one
+const numericGuess = (fields: string[]) => {
+  const f = fields.find((x) => /ms|duration|latency|took|time|bytes|size|count|number|status|code/i.test(x)) ?? fields[0];
+  return f ? `@${f}` : "template_id";
+};
+const modeOf = (s: Spec): Mode => s.measure.fn === "lines" ? "lines" : s.measure.fn === "count" ? (s.over_time ? "trend" : "count") : "number";
+
+function Glyph({ d }: { d: string }) {
+  return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
+}
+
+/** Three plain questions: what to show, which lines, and (for numbers) how to break it down. */
+function Builder({ spec, setSpec, schema }: { spec: Spec; setSpec: (s: Spec) => void; schema?: Schema }) {
   const fields = schema?.fields ?? [];
   const ops = schema?.ops ?? ["="];
+  const mode = modeOf(spec);
   const range = RANGES.find(([, m]) => m === spec.minutes)?.[0] ?? "1h";
-  const measures = (schema?.measures ?? ["count"]).filter((m) => m !== "p95" || schema?.engine === "clickhouse");
-  const lines = spec.measure.fn === "lines";
-  const plain = lines || spec.measure.fn === "count";  // measures without a field
-  const what = lines ? "the matching lines" : spec.measure.fn === "count" ? "the number of lines" : `${MEASURE_LABEL[spec.measure.fn].toLowerCase()} ${spec.measure.field ?? ""}`;
-  // the search box is the first "message contains" filter; the other filters are pills
+  const stats = STATS.filter(([fn]) => (schema?.measures ?? []).includes(fn) && (fn !== "p95" || schema?.engine === "clickhouse"));
+  const setMode = (m: Mode) => setSpec({
+    ...spec,
+    over_time: m === "trend",
+    measure: m === "lines" ? { fn: "lines" } : m === "number"
+      ? { fn: modeOf(spec) === "number" ? spec.measure.fn : "avg", field: spec.measure.field ?? numericGuess(fields) }
+      : { fn: "count" },
+  });
+  // the search box is the first "message contains" filter; the other filters are chips
   const si = spec.filters.findIndex((f) => f.field === "message" && f.op === "contains");
   const searched = si >= 0 ? spec.filters[si].value : "";
   const [text, setText] = useState(searched);
@@ -113,76 +146,84 @@ function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpe
     const rest = spec.filters.filter((_, j) => j !== si);
     setSpec({ ...spec, filters: v.trim() ? [{ field: "message", op: "contains", value: v.trim() }, ...rest] : rest });
   };
-  const pills = spec.filters.map((f, i) => [f, i] as const).filter(([, i]) => i !== si);
-  const preset = (p: Partial<Spec>) => setSpec({ ...EMPTY, minutes: spec.minutes, ...p });
+  const chips = spec.filters.map((f, i) => [f, i] as const).filter(([, i]) => i !== si);
   const setFilter = (i: number, nf: Filter) => setSpec({ ...spec, filters: spec.filters.map((x, j) => (j === i ? nf : x)) });
+  const toggleSplit = (g: string) => setSpec({ ...spec, group_by: spec.group_by.includes(g) ? spec.group_by.filter((x) => x !== g) : [...spec.group_by, g].slice(-2) });
+  const extraSplits = spec.group_by.filter((g) => !SPLITS.includes(g));
+  const changed = spec.filters.length > 0 || spec.group_by.length > 0 || spec.minutes !== START.minutes || mode !== "lines";
+
   return (
-    <form className="builder" onSubmit={(e) => { e.preventDefault(); onRun(); }}>
-      <div className="presets" role="group" aria-label="Start from">
-        <span className="muted small">Start from</span>
-        {PRESETS.map(([name, p]) => <button key={name} type="button" className="ask-example" onClick={() => preset(p)}>{name}</button>)}
+    <div className="qb">
+      <div className="qb-try">
+        <span className="muted small">Try</span>
+        {PRESETS.map(([name, p]) => <button key={name} type="button" className="link-btn small" onClick={() => setSpec({ ...EMPTY, minutes: spec.minutes, ...p })}>{name}</button>)}
+        {changed && <button type="button" className="link-btn small qb-reset" onClick={() => setSpec({ ...START })}>Start over</button>}
       </div>
-      <input type="search" className="builder-search" value={text} onChange={(e) => search(e.target.value)}
-        placeholder="Search the message text, e.g. timeout or order 1042" aria-label="Search the message text" />
-      <div className="sentence">
-        <span>Show</span>
-        <Pop label={what} title="What to measure">{(close) => (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="pop-title">Measure</div>
-            <ul className="val-list">{measures.map((m) => (
-              <li key={m}><button type="button" aria-pressed={spec.measure.fn === m} onClick={() => {
-                const noField = m === "count" || m === "lines";
-                setSpec({ ...spec, measure: { fn: m, field: noField ? undefined : spec.measure.field ?? (fields[0] ? `@${fields[0]}` : "host") } });
-                if (noField) close();
-              }}>{MEASURE_LABEL[m]}{m === "count" || m === "lines" ? "" : "…"}</button></li>))}</ul>
-            {!plain && <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Measure field" />}
-          </div>)}
-        </Pop>
-        <span>from the</span>
-        <Pop label={RANGE_WORDS[range]} title="Time range">{(close) => (
-          <TimeRange value={range} onChange={(r) => { setSpec({ ...spec, minutes: RANGES.find(([k]) => k === r)![1] }); close(); }} />)}
-        </Pop>
-        {pills.length > 0 && <span>where</span>}
-        {pills.map(([f, i], n) => (
-          <span key={i} className="chip-group">
-            {n > 0 && <span className="muted">and</span>}
-            <Pop className="on" label={<>{label(f.field)} <span className="pill-op">{OP_LABEL[f.op] ?? f.op}</span> {f.value}</>} title="Edit filter">{(close) => (
-              <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setFilter(i, nf); close(); }} />)}
+
+      <section className="qb-step" aria-labelledby="qb-show">
+        <h3 id="qb-show" className="qb-label">Show</h3>
+        <div className="stack" style={{ gap: 10 }}>
+          <div className="qb-modes" role="radiogroup" aria-labelledby="qb-show">
+            {MODES.map(([m, title, hint]) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} className="qb-mode" onClick={() => setMode(m)}>
+                <Glyph d={ICON[m]} />
+                <span><strong>{title}</strong><span className="small">{hint}</span></span>
+              </button>
+            ))}
+          </div>
+          {mode === "number" && (
+            <div className="row qb-number">
+              <select aria-label="Which number" value={spec.measure.fn} onChange={(e) => setSpec({ ...spec, measure: { ...spec.measure, fn: e.target.value } })}>
+                {stats.map(([fn, name]) => <option key={fn} value={fn}>{name}</option>)}
+              </select>
+              <span className="muted">of</span>
+              <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Field" />
+              <label className="row qb-check"><input type="checkbox" checked={spec.over_time} onChange={(e) => setSpec({ ...spec, over_time: e.target.checked })} /> over time</label>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="qb-step" aria-labelledby="qb-which">
+        <h3 id="qb-which" className="qb-label">Which lines</h3>
+        <div className="stack" style={{ gap: 10 }}>
+          <div className="row qb-which">
+            <Pop className="qb-time" label={<>{RANGE_WORDS[range][0].toUpperCase() + RANGE_WORDS[range].slice(1)}</>} title="Time range">{(close) => (
+              <TimeRange value={range} onChange={(r) => { setSpec({ ...spec, minutes: RANGES.find(([k]) => k === r)![1] }); close(); }} />)}
             </Pop>
-            <button type="button" className="pill-x" aria-label={`Remove filter ${label(f.field)}`} onClick={() => setSpec({ ...spec, filters: spec.filters.filter((_, j) => j !== i) })}>×</button>
-          </span>
-        ))}
-        <Pop className="add" label={pills.length ? "+ and" : "+ filter"} title="Narrow it down">{(close) => (
-          <FilterEdit fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: [...spec.filters, nf] }); close(); }} />)}
-        </Pop>
-        {!lines && spec.group_by.length > 0 && <span>per</span>}
-        {!lines && spec.group_by.map((g, i) => (
-          <span key={g} className="chip-group">
-            {i > 0 && <span className="muted">and</span>}
-            <span className="pill on static">{label(g)}</span>
-            <button type="button" className="pill-x" aria-label={`Stop splitting by ${label(g)}`} onClick={() => setSpec({ ...spec, group_by: spec.group_by.filter((x) => x !== g) })}>×</button>
-          </span>
-        ))}
-        {!lines && spec.group_by.length < 2 && (
-          <Pop className="add" label={spec.group_by.length ? "+ and" : "+ split by"} title="Break it down">{(close) => {
-            const pick = (v: string) => { if (v && !spec.group_by.includes(v)) setSpec({ ...spec, group_by: [...spec.group_by, v] }); close(); };
-            return (
-              <div className="stack" style={{ gap: 8 }}>
-                <div className="pop-title">One row (or line) per</div>
-                <div className="row" style={{ gap: 6 }}>{["service", "host", "level"].filter((q) => !spec.group_by.includes(q)).map((q) => <button key={q} type="button" className="btn small" onClick={() => pick(q)}>{label(q)}</button>)}</div>
-                <FieldSelect allowNone value="" onChange={pick} fields={fields} label="Other field" />
-              </div>);
-          }}</Pop>
-        )}
-        {!lines && <Segmented label="Shape" value={spec.over_time ? "time" : "total"} onChange={(v) => setSpec({ ...spec, over_time: v === "time" })}
-          options={[["total", "as a total"], ["time", "over time"]]} />}
-      </div>
-      <div className="row">
-        <button className="btn primary" disabled={running}>{running ? <><span className="spin" aria-hidden="true" />Running…</> : "Run"}</button>
-        <span className="muted small">{lines ? "Newest first. Click a service, host, level or field to narrow it down." : "Updates as you change it. Click a result row to drill in."}</span>
-        {spec.filters.length + spec.group_by.length > 0 && <button type="button" className="btn small ghost" onClick={() => setSpec({ ...EMPTY, minutes: spec.minutes })}>Clear</button>}
-      </div>
-    </form>
+            <input type="search" className="qb-search" value={text} onChange={(e) => search(e.target.value)}
+              placeholder="Containing text, e.g. timeout or order 1042" aria-label="Lines containing text" />
+          </div>
+          <div className="row qb-chips">
+            {chips.map(([f, i]) => (
+              <span key={i} className="chip-group">
+                <Pop className="on" label={<>{label(f.field)} <span className="pill-op">{OP_LABEL[f.op] ?? f.op}</span> {f.value}</>} title="Change this filter">{(close) => (
+                  <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setFilter(i, nf); close(); }} />)}
+                </Pop>
+                <button type="button" className="pill-x" aria-label={`Remove filter ${label(f.field)}`} onClick={() => setSpec({ ...spec, filters: spec.filters.filter((_, j) => j !== i) })}>×</button>
+              </span>
+            ))}
+            <Pop className="add" label="+ Add filter" title="Only lines where…">{(close) => (
+              <FilterEdit fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: [...spec.filters, nf] }); close(); }} />)}
+            </Pop>
+            {chips.length === 0 && <span className="muted small">All levels, services and hosts</span>}
+          </div>
+        </div>
+      </section>
+
+      {mode !== "lines" && (
+        <section className="qb-step" aria-labelledby="qb-split">
+          <h3 id="qb-split" className="qb-label">{mode === "trend" || spec.over_time ? "One line per" : "One row per"}</h3>
+          <div className="row qb-chips">
+            {[...SPLITS, ...extraSplits].map((g) => (
+              <button key={g} type="button" className="qb-toggle" aria-pressed={spec.group_by.includes(g)} onClick={() => toggleSplit(g)}>{label(g)}</button>
+            ))}
+            <FieldSelect allowNone value="" onChange={(v) => v && toggleSplit(v)} fields={fields} label="Another field" />
+            <span className="muted small">{spec.group_by.length ? "Up to two" : "None picked: one total"}</span>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -228,29 +269,58 @@ function LinesView({ r, onDrill }: { r: QueryResult; onDrill?: Drill }) {
   );
 }
 
-export function ResultView({ r, ran, onDrill }: { r: QueryResult; ran?: Spec; onDrill?: Drill }) {
+/** What a result is called: "51 lines", "4 services", "12 points". */
+function titleOf(r: QueryResult, ran?: Spec) {
+  const n = r.rows.length;
+  if (ran?.measure.fn === "lines") return `${fmt(n)} line${n === 1 ? "" : "s"}`;
+  if (ran?.over_time) return `${fmt(n)} point${n === 1 ? "" : "s"} in time`;
+  const g = ran?.group_by[0];
+  if (g) return `${fmt(n)} ${label(g)}${n === 1 ? "" : g === "template_id" ? "s" : g.endsWith("s") ? "es" : "s"}`;
+  return `${fmt(n)} row${n === 1 ? "" : "s"}`;
+}
+
+export function ResultView({ r, ran, onDrill, busy, actions }: { r?: QueryResult; ran?: Spec; onDrill?: Drill; busy?: boolean; actions?: ReactNode }) {
+  if (!r) return <Card title="Working…" actions={actions}><div className="muted small">Running the first query.</div></Card>;
   const cols = r.columns;
+  const hint = busy ? "Updating…" : ran ? (ran.measure.fn === "lines" ? "newest first · click a service, host, level or field to narrow it down" : "") : `${r.engine} · ${r.table}`;
   if (ran?.measure.fn === "lines") return (
-    <Card title={`${r.rows.length} line${r.rows.length === 1 ? "" : "s"}`} hint="newest first">
-      {r.rows.length === 0 ? <Empty title="No lines">Widen the time range, change the search or remove a filter.</Empty> : <LinesView r={r} onDrill={onDrill} />}
+    <Card title={titleOf(r, ran)} hint={hint} actions={actions} className={busy ? "is-busy" : ""}>
+      {r.rows.length === 0 ? <Empty title="No lines match">Widen the time range, change the text or remove a filter.</Empty> : <LinesView r={r} onDrill={onDrill} />}
     </Card>
   );
+  // one number and nothing to break it down by: say it, don't tabulate it
+  if (ran && r.rows.length === 1 && cols.length === 1) {
+    const v = r.rows[0][0];
+    const what = ran.measure.fn === "count" ? "matching lines" : `${STATS.find(([fn]) => fn === ran.measure.fn)?.[1].toLowerCase() ?? ran.measure.fn} of ${ran.measure.field}`;
+    return (
+      <Card title="Answer" hint={hint} actions={actions} className={busy ? "is-busy" : ""}>
+        <p className="qb-answer"><strong className="num">{typeof v === "number" ? fmt(Math.round(v * 100) / 100) : v === null ? "no value" : String(v)}</strong> {what}
+          <span className="muted"> · {RANGE_WORDS[RANGES.find(([, m]) => m === ran.minutes)?.[0] ?? "1h"]}</span></p>
+        {ran.measure.fn === "count" && onDrill && <button type="button" className="btn small" onClick={() => onDrill([], true)}>See these lines</button>}
+      </Card>
+    );
+  }
   const by = drillFields(cols, ran);
   const canDrill = !!onDrill && by.some(Boolean);
   const pick = (row: unknown[]) => by.flatMap((f, j) => (f && row[j] !== null ? [{ field: f, op: "=", value: String(row[j]) }] : []));
   const chart = <AutoChart columns={cols} rows={r.rows} />;
+  const numeric = cols.map((_, j) => r.rows.some((row) => typeof row[j] === "number"));
+  const head = (c: string, j: number) => !ran ? c : j === cols.length - 1 && ran.measure.fn !== "count"
+    ? `${STATS.find(([fn]) => fn === ran.measure.fn)?.[1] ?? ran.measure.fn} of ${ran.measure.field}` : label(c);
+  // builder results read rounded; raw SQL results stay exact
+  const cell = (v: unknown) => typeof v === "number" ? (ran ? (Math.round(v * 100) / 100).toLocaleString() : String(v)) : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
   return (
-    <Card title={`${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={`${r.engine} · ${r.table}`}>
-      {r.rows.length === 0 ? <Empty title="No rows">Widen the time range or remove a filter.</Empty> : (
+    <Card title={ran ? titleOf(r, ran) : `${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={hint || (canDrill ? "hover a row to narrow it down or see its lines" : "")} actions={actions} className={busy ? "is-busy" : ""}>
+      {r.rows.length === 0 ? <Empty title="Nothing matches">Widen the time range or remove a filter.</Empty> : (
         <div className="stack">
           {chart}
           <div className="table-wrap" style={{ maxHeight: 420, overflow: "auto" }}>
             <table>
-              <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}{canDrill && <th><span className="sr-only">Drill in</span></th>}</tr></thead>
+              <thead><tr>{cols.map((c, j) => <th key={c} className={numeric[j] ? "right" : ""}>{head(c, j)}</th>)}{canDrill && <th><span className="sr-only">Narrow down</span></th>}</tr></thead>
               <tbody>
                 {r.rows.map((row, i) => (
                   <tr key={i} className={canDrill ? "drill-row" : ""}>{row.map((v, j) => (
-                    <td key={j} className={`mono small ${typeof v === "number" ? "right num" : ""}`}>{typeof v === "object" && v !== null ? JSON.stringify(v) : v === null ? <span className="muted">null</span> : String(v)}</td>
+                    <td key={j} className={`mono small ${numeric[j] ? "right num" : ""}`}>{v === null ? <span className="muted">none</span> : cell(v)}</td>
                   ))}
                   {canDrill && <td className="drill-actions">{pick(row).length > 0 && <>
                     <button type="button" className="btn small ghost" onClick={() => onDrill!(pick(row), false)}>Only this</button>
@@ -278,7 +348,7 @@ export default function Query() {
   const [picked, setTabState] = useState<Tab>(TABS.some(([t]) => t === initial) ? initial as Tab : "ask");
   const tab: Tab = noSql && picked === "sql" ? "builder" : picked;
   const setTab = (t: Tab) => { setTabState(t); setParams((p) => { p.set("tab", t); return p; }, { replace: true }); };
-  const [spec, setSpec] = useState<Spec>(EMPTY);
+  const [spec, setSpec] = useState<Spec>(START);
   const [sql, setSql] = useState(params.get("sql") ?? "");
   const [name, setName] = useState("");
   const [naming, setNaming] = useState(false);
@@ -311,7 +381,7 @@ export default function Query() {
 
   return (
     <>
-      <PageHead title="Query" sub={`Ask a question in plain words${noSql ? " or" : ","} build one from a sentence${noSql ? "" : ", or write SQL"}. Everything is read-only.`} />
+      <PageHead title="Query" sub={`Ask a question in plain words${noSql ? " or" : ","} build one step by step${noSql ? "" : ", or write SQL"}. Everything is read-only.`} />
       <div className={tab === "sql" ? "query-layout" : ""}>
         {tab === "sql" && (
           <aside className="query-side">
@@ -355,7 +425,7 @@ export default function Query() {
                 </Pop>
               )}
             </div>
-            {tab === "builder" && <Builder spec={spec} setSpec={setSpec} schema={schema} running={build.isPending} onRun={() => build.mutate(spec)} />}
+            {tab === "builder" && <Builder spec={spec} setSpec={setSpec} schema={schema} />}
             {tab === "ask" && <AskPanel initialPlan={params.get("plan") ?? undefined} />}
             {tab === "sql" && (
               <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); run.mutate(sql); }}>
@@ -367,14 +437,8 @@ export default function Query() {
                 </div>
               </form>
             )}
-            {currentSql && tab === "builder" && (
-              <details className="gen-sql"><summary className="small">{noSql ? "View query" : "View SQL"}</summary>
-                <pre className="code-block mono small">{currentSql}</pre>
-                {!noSql && <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>}
-              </details>
-            )}
             {error && tab !== "ask" && <div className="callout bad" style={{ marginTop: 12 }}>{error.message}</div>}
-            {result && currentSql && (
+            {result && currentSql && tab === "sql" && (
               <div className="row" style={{ marginTop: 12 }}>
                 {naming ? (
                   <form className="row" onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => { setNaming(false); setName(""); } }); }}>
@@ -387,7 +451,25 @@ export default function Query() {
               </div>
             )}
           </Card>
-          {result && <ResultView r={result} ran={tab === "builder" ? build.variables : undefined} onDrill={tab === "builder" ? drill : undefined} />}
+          {tab === "builder" && (result || build.isPending) && (
+            <ResultView r={result} ran={build.variables} onDrill={drill} busy={build.isPending} actions={<>
+              {currentSql && <Pop className="ghost" label={noSql ? "View query" : "View SQL"} title="The query this runs">{() => (
+                <div className="stack qb-code" style={{ gap: 8 }}>
+                  <pre className="code-block mono small">{currentSql}</pre>
+                  {!noSql && <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>}
+                </div>)}
+              </Pop>}
+              {currentSql && <Pop className="ghost" label="Save" title="Save this query">{(close) => (
+                <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => { setName(""); close(); } }); }}>
+                  <div className="pop-title">Name it to find it under Saved</div>
+                  <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Checkout errors" aria-label="Query name" />
+                  {save.error && <span className="error-text small">{save.error.message}</span>}
+                  <div className="row"><button className="btn small primary" disabled={!name.trim() || save.isPending}>Save</button></div>
+                </form>)}
+              </Pop>}
+            </>} />
+          )}
+          {tab === "sql" && result && <ResultView r={result} />}
         </div>
       </div>
     </>
