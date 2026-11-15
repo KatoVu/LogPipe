@@ -26,7 +26,7 @@ from ..enrich.sql_guard import validate_sql
 from ..parsing.grok import compile_rule, rule_from_template
 from ..registry import UNK_TEMPLATE_ID
 from . import otlp
-from .auth import COOKIE, Auth
+from .auth import COOKIE, DEFAULT_PASSWORD, Auth
 from .core import Busy, KeyScope, Server, now_iso
 from .mcp_tools import build_mcp, mcp_may_call
 from .metrics import METRICS
@@ -76,6 +76,8 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
                 return JSONResponse({"detail": "AI assistant keys can't call this route"}, 403)
         elif guarded and auth.configured and not auth.valid(request.cookies.get(COOKIE)):
             return JSONResponse({"detail": "log in first"}, 401)
+        elif guarded and auth.must_change:
+            return JSONResponse({"detail": "set a new password first"}, 403)
         return await call_next(request)
 
     def client_of(request: Request) -> str:
@@ -86,6 +88,7 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
         return {
             "required": auth.configured,
             "authenticated": not auth.configured or auth.valid(request.cookies.get(COOKIE)),
+            "must_change": auth.must_change,
         }
 
     @app.post("/api/auth/login")
@@ -126,6 +129,8 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
             )
         if auth.login(client, str(body.get("current") or "")) is None:
             raise HTTPException(403, "the current password is wrong")
+        if str(body.get("new") or "") == DEFAULT_PASSWORD:
+            raise HTTPException(400, "pick a password other than the default")
         auth.set_password(str(body.get("new") or ""))  # ValueError -> 400 when too short
         res = JSONResponse({"ok": True})  # the old sessions are void now; this one is renewed
         res.set_cookie(

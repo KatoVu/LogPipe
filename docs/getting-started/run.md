@@ -62,8 +62,7 @@ UI; Enter lets it do the act instead. Files go to `artifacts/showcase/`.
 ```sh
 cp .env.example .env
 docker compose --profile platform up --build
-# open http://localhost:8080 — the first start prints the admin password:
-docker compose logs server | grep -i password
+# open http://localhost:8080 and log in with changeme; it asks for a new password
 ```
 
 Only want the server, from the shipped image or from source? See [Set up the server](server.md).

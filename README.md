@@ -119,8 +119,8 @@ flowchart LR
 ## Setting up the server
 
 The server takes in agent logs, runs the operator UI on port 8080 and trains the models. It
-stores data in ClickHouse (or MongoDB). On the first start it prints the UI admin password,
-unless `LOGPIPE_ADMIN_PASSWORD` is set.
+stores data in ClickHouse (or MongoDB). A new server's UI password is `changeme` (unless
+`LOGPIPE_ADMIN_PASSWORD` is set); the first login asks you to replace it.
 
 ### Using the shipped container
 
@@ -151,7 +151,7 @@ git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 make setup                                   # uv sync + .env
 cd web && npm ci && npm run build && cd ..   # UI into logpipe/server/static
 docker compose up -d clickhouse
-uv run logpipe server --store clickhouse     # prints the admin password on first start
+uv run logpipe server --store clickhouse     # log in with changeme, then set your own
 ```
 
 ## Install the agent
