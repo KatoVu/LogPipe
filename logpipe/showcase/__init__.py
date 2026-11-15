@@ -419,7 +419,7 @@ def _tour(
         2,
         "Connect a collector agent",
         [
-            f"In the UI: {B}Agents → Add an agent{R} → create a key and copy it.",
+            f"In the UI: {B}Setup guide → API key{R}: create a key and copy it.",
             "Paste the key here and press Enter (or just press Enter and I'll create one).",
             "Then you start the agent container and track the files, with the commands I print.",
         ],
@@ -464,10 +464,10 @@ def _tour(
         return any(a["hostname"] == HOST and a["online"] for a in api("/api/agents")["agents"])
 
     t.wait(
-        f"agent {HOST} connected (see it on the Agents page)",
+        f"agent {HOST} connected (see it in Setup guide → Agents)",
         connected,
         do=start_agent,
-        show="/agents",
+        show="/setup?step=agents",
     )
 
     def online() -> bool:
@@ -509,10 +509,10 @@ def _tour(
     for svc in shop:
         print(f"  lpa {shlex.join(track(svc))}")
     t.wait(
-        f"agent {HOST} online with 3 sources (see it on the Agents page)",
+        f"agent {HOST} online with 3 sources (see it in Setup guide → Sources)",
         online,
         do=track_all,
-        show=f"/agents/{HOST}",
+        show="/setup?step=sources",
     )
     t.pause()
 
@@ -552,7 +552,7 @@ def _tour(
         drafted,
         lambda: api("/api/review/generate", {"sample_cap": 2000}),
         steps=_job_steps(api, "draft"),
-        show=lambda: f"/review/{b['id']}" if (b := batch()) else "/setup",
+        show="/setup?step=review",
     )
     t.pause()
 
@@ -609,7 +609,7 @@ def _tour(
         do_review,
         live=reviewed,
         steps=_job_steps(api, "apply", "retrain"),
-        show="/streams",
+        show="/setup?step=train",
     )
     t.pause()
 

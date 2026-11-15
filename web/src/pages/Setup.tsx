@@ -1,7 +1,7 @@
 // The setup guide, one step per screen: key -> agents -> sources -> sample -> streams ->
 // review templates -> train. The stepper shows where you are; finished steps can be revisited.
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type Batch, type Job, type Settings, type Source, type Stream } from "../api";
 import { Card, JobRow, Loading, Meter, PageHead, Stepper, TimeAgo, fmt, sourceLabel } from "../ui";
 import { ConnectHelp, InstallStep, KeyStep } from "./AddAgent";
@@ -20,6 +20,8 @@ interface SetupState {
 }
 
 const STEPS = ["API key", "Agents", "Sources", "Sample", "Streams & groups", "Review", "Train"];
+// ?step=agents opens that step (the showcase sends you to the one it just did)
+const STEP_KEYS = ["key", "agents", "sources", "sample", "streams", "review", "train"];
 
 function Screen({ n, title, intro, children }: { n: number; title: string; intro: ReactNode; children: ReactNode }) {
   return (
@@ -38,7 +40,9 @@ const active = (j?: Job) => !!j && (j.status === "queued" || j.status === "runni
 
 export default function Setup() {
   const { data, error } = usePoll<SetupState>("/api/setup", 3000);
-  const [picked, setPicked] = useState<number | null>(null);
+  const [params] = useSearchParams();
+  const asked = STEP_KEYS.indexOf(params.get("step") ?? "");
+  const [picked, setPicked] = useState<number | null>(asked >= 0 ? asked : null);
   const [token, setToken] = useState("");
   const [cap, setCap] = useState<number | null>(null);
   const [streamsSeen, setStreamsSeen] = useState(false);
