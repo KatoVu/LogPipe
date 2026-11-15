@@ -149,6 +149,13 @@ class ClickHouseReads(StoreReads):
         if cfg.readonly_user:
             import clickhouse_connect
 
+            # the init script grants CLICKHOUSE_DB's tables; another database (the showcase's,
+            # a benchmark's) needs the same two grants or every free-form query is refused
+            db = store.client.database
+            if "`" in db or "`" in cfg.readonly_user:
+                raise ValueError("database and read-only user names can't contain backticks")
+            for table in ("iot_logs", "anomaly_alerts"):
+                self.client.command(f"GRANT SELECT ON `{db}`.{table} TO `{cfg.readonly_user}`")
             self.query_client = clickhouse_connect.get_client(
                 host=cfg.host,
                 port=cfg.port,
