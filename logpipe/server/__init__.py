@@ -70,7 +70,6 @@ def run(
     store: str,
     queue: str,
     llm: str,
-    browser: str,
     data_dir: Path,
     epochs: int,
     datadog: Datadog | None = None,
@@ -103,7 +102,7 @@ def run(
         control,
         data_dir=data_dir,
         epochs=epochs,
-        adapter_factory=lambda: dd.traced(get_adapter(llm, browser=browser), llm),  # type: ignore[arg-type]
+        adapter_factory=lambda: dd.traced(get_adapter(llm), llm),  # type: ignore[arg-type]
         queue_factory=lambda: open_queue(queue),
         bootstrap_key=get_settings().server.bootstrap_key or None,
         datadog=dd,

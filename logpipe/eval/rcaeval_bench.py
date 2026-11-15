@@ -1,4 +1,4 @@
-"""RCAEval benchmark (``python -m logpipe.eval.rcaeval_bench TASKS_DIR``).
+"""RCAEval benchmark (``logpipe eval rcaeval TASKS_DIR``).
 
 `RCAEval <https://github.com/phamquiluan/RCAEval>`_ publishes labelled failure cases from real
 microservice testbeds. ``rcaeval-agent export`` writes them as a blind task view (one
@@ -351,7 +351,9 @@ def quiet_logs() -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
+    ap = argparse.ArgumentParser(
+        prog="logpipe eval rcaeval", description=(__doc__ or "").split("\n\n")[0]
+    )
     ap.add_argument("tasks", type=Path, help="a dataset directory from rcaeval-agent export")
     ap.add_argument(
         "--out", type=Path, help="where preds.<dataset>.<variant>.jsonl go (default: TASKS/../..)"

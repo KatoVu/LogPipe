@@ -41,11 +41,11 @@ browser, so sign in again if you switch browsers. Cookie banners are answered wi
 ## 3. Use it from logpipe
 
 ```sh
-uv run logpipe --browser chrome server --llm llm:web:gemini
-uv run logpipe --browser camoufox calibrate --llm llm:web:claude
+WEB_BROWSER=chromium uv run logpipe server --llm llm:web:gemini
+WEB_BROWSER=camoufox uv run logpipe calibrate --llm llm:web:claude
 ```
 
-`--browser` is a global flag, so it goes before the command. Or set it once in `.env`:
+Or set both once in `.env`:
 
 ```sh
 LLM_BACKEND=llm:web:gemini

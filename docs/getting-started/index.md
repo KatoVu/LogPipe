@@ -8,7 +8,7 @@ logpipe runs in three ways. Pick by what you want to see:
 | Ship your own hosts' logs and use the operator UI | `docker compose --profile platform up --build` | Docker |
 | Parse and score a directory of log files in batch | `make calibrate train run` | uv |
 
-Not sure? `uv run logpipe` (same as `logpipe start`) asks a few questions, starts the
+Not sure? `uv run logpipe start` asks a few questions, starts the
 services it needs (Kafka, ClickHouse) and runs the right command. It also prints that command,
 so next time you can run it directly.
 

@@ -21,8 +21,9 @@ RUN      := uv run $(if $(wildcard .env),--env-file .env)
 LLM_ARG  := $(if $(LLM),--llm $(LLM))
 # DeepParse calls Chromium "chrome"; it runs the `chromium` on PATH.
 WEB      := $(if $(filter chromium,$(BROWSER)),chrome,$(BROWSER))
-LOGPIPE  := $(RUN) logpipe --browser $(WEB)
-EVAL     := $(LOGPIPE) eval --out $(EVAL_OUT) $(LLM_ARG)
+LOGPIPE  := WEB_BROWSER=$(WEB) $(RUN) logpipe
+# $(call EVAL,<benchmark>): one `logpipe eval` subcommand writing into EVAL_OUT
+EVAL      = $(LOGPIPE) eval $(1) --out $(EVAL_OUT)
 TRAIN    := --epochs $(EPOCHS) $(if $(THREADS),--threads $(THREADS))
 SCRAPER  := $(RUN) python -m deepparse.ai_scraper
 # RCAEval runs in its own tool env: its baselines' deps stay out of ours
@@ -59,7 +60,7 @@ calibrate: ## build registry v1 from LOGS_PATH
 	$(LOGPIPE) calibrate $(LLM_ARG)
 
 train: ## train LogBERT on per-device windows of LOGS_PATH
-	$(LOGPIPE) train-logbert --epochs $(EPOCHS)
+	$(LOGPIPE) train --epochs $(EPOCHS)
 
 run: ## full pipeline: parse, store, enrich, detect
 	$(LOGPIPE) run $(LLM_ARG)
@@ -68,7 +69,7 @@ run-fast: ## fast path only: parse, store, publish unknown lines to Kafka
 	$(LOGPIPE) run --queue kafka --no-enrich
 
 worker: ## learning worker: consume the Kafka unresolved queue
-	$(LOGPIPE) worker --queue kafka $(LLM_ARG)
+	$(LOGPIPE) worker $(LLM_ARG)
 
 replay: ## parse LOGS_PATH with the frozen registry only
 	$(LOGPIPE) replay --quiet
@@ -78,7 +79,7 @@ gen-iot: ## write the synthetic IoT fleet to artifacts/fleet
 
 fleet: gen-iot ## end to end on the synthetic fleet
 	$(LOGPIPE) calibrate --logs artifacts/fleet/history $(LLM_ARG)
-	$(LOGPIPE) train-logbert --logs artifacts/fleet/history --epochs $(EPOCHS)
+	$(LOGPIPE) train --logs artifacts/fleet/history --epochs $(EPOCHS)
 	$(LOGPIPE) run --logs artifacts/fleet/test $(LLM_ARG)
 
 demo-datadog: ## incident for Datadog: slow then failing store (PHASE=seconds each)
@@ -87,56 +88,56 @@ demo-datadog: ## incident for Datadog: slow then failing store (PHASE=seconds ea
 ## --- datasets (artifacts/datasets) ------------------------------------------
 
 data: ## download every eval dataset (Loghub-2k, HDFS, BGL)
-	$(LOGPIPE) fetch-data
+	$(LOGPIPE) eval fetch
 
 data-loghub: ## Loghub-2k (parsing eval)
-	$(LOGPIPE) fetch-data loghub2k
+	$(LOGPIPE) eval fetch loghub2k
 
 data-hdfs: ## HDFS_1 from Zenodo
-	$(LOGPIPE) fetch-data HDFS
+	$(LOGPIPE) eval fetch HDFS
 
 data-bgl: ## BGL from Zenodo
-	$(LOGPIPE) fetch-data BGL
+	$(LOGPIPE) eval fetch BGL
 
 ## --- evaluation (results in EVAL_OUT) ---------------------------------------
 
 bench: ## lines/s one server keeps up with, its CPU and memory (STORE=clickhouse to include writes)
-	$(LOGPIPE) bench --store $(or $(STORE),memory)
+	$(LOGPIPE) eval throughput --store $(or $(STORE),memory)
 
 eval: eval-parsing eval-alias eval-iot eval-hdfs eval-bgl eval-report ## every benchmark, then the report
 
 eval-parsing: data-loghub ## GA/PA on Loghub-2k vs. DeepParse
-	$(EVAL) parsing
+	$(call EVAL,parsing) $(LLM_ARG)
 
 eval-alias: ## alias decisions on labelled template pairs
-	$(EVAL) alias
+	$(call EVAL,alias)
 
 eval-iot: ## synthetic fleet end to end, with ablations
-	$(EVAL) iot $(TRAIN)
+	$(call EVAL,iot) $(LLM_ARG) $(TRAIN)
 
 eval-hdfs: data-hdfs ## LogBERT on an HDFS subset
-	$(EVAL) logbert --dataset HDFS $(TRAIN)
+	$(call EVAL,logbert) --dataset HDFS $(LLM_ARG) $(TRAIN)
 
 eval-bgl: data-bgl ## LogBERT on a BGL subset
-	$(EVAL) logbert --dataset BGL $(TRAIN)
+	$(call EVAL,logbert) --dataset BGL $(LLM_ARG) $(TRAIN)
 
 eval-rcaeval: ## RCA on RCAEval cases, scored by RCAEval (DATASET VIA=direct|mcp LIMIT LLM VARIANTS FRESH=1)
 	test -d $(RCA_OUT)/tasks/$(DATASET) || $(RCAEVAL) export --dataset $(DATASET) \
 		--out $(RCA_OUT)/tasks --data-root $(RCA_OUT)/data
-	WEB_BROWSER=$(WEB) $(RUN) python -m logpipe.eval.rcaeval_bench $(RCA_OUT)/tasks/$(DATASET) --out $(RCA_OUT) \
+	$(LOGPIPE) eval rcaeval $(RCA_OUT)/tasks/$(DATASET) --out $(RCA_OUT) \
 		--via $(VIA) $(if $(LIMIT),--limit $(LIMIT)) $(if $(filter direct,$(VIA)),$(LLM_ARG)) \
 		$(if $(VARIANTS),--variants $(VARIANTS)) $(if $(FRESH),--fresh)
 	for p in $(RCA_OUT)/preds.$(DATASET).*.jsonl; do echo "$$p"; \
 		$(RCAEVAL) evaluate --tasks $(RCA_OUT)/tasks/$(DATASET) --predictions "$$p" --report-chance; done
 
 eval-report: ## summarise EVAL_OUT into a report
-	$(EVAL) report
+	$(call EVAL,report)
 
 eval-gate: ## compare EVAL_OUT with eval/baseline.json (the nightly CI check)
-	$(EVAL) gate --baseline eval/baseline.json
+	$(call EVAL,gate) --baseline eval/baseline.json
 
 eval-baseline: ## record EVAL_OUT as the new eval/baseline.json
-	$(EVAL) gate --baseline eval/baseline.json --write-baseline
+	$(call EVAL,gate) --baseline eval/baseline.json --write-baseline
 
 ## --- mask-model retrain (run on purpose; fine-tune itself runs on a GPU) ----
 

@@ -28,7 +28,7 @@ proves the service wiring; tests of the ClickHouse storage backend go under the 
 
 Runs at 02:00 Asia/Ho_Chi_Minh, on every push to `main`, and by hand (Actions → "Nightly eval gate" → Run workflow).
 
-1. `logpipe fetch-data loghub2k` (cached on the hash of `logpipe/eval/datasets.py`)
+1. `logpipe eval fetch loghub2k` (cached on the hash of `logpipe/eval/datasets.py`)
 2. `logpipe eval parsing --no-tune` (GA/PA on 14 Loghub-2k systems + IoT_fleet, offline masks, Drain depth 5 / sim 0.4)
 3. `logpipe eval alias` (28 labelled template pairs)
 4. `logpipe eval iot --epochs 3 --devices 3 --test-hours 2` (reduced end-to-end fleet run, about 80 s)

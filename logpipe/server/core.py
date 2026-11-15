@@ -1788,7 +1788,7 @@ class Server:
     def _job_bench(
         self, progress, store: str = "memory", max_rate: int = 0, step_seconds: float = 10
     ) -> str:
-        """``logpipe bench`` in its own process (so it neither slows this server nor is skewed
+        """``logpipe eval throughput`` in its own process (so it neither slows this server nor is skewed
         by it); its progress lines become the job's, its result a ``bench`` doc."""
         import subprocess
         import sys

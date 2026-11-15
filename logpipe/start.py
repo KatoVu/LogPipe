@@ -126,10 +126,10 @@ def ask_password() -> str:
             print("  they don't match")
 
 
-def ask_setup(saved: dict, mode: str | None = None) -> dict:
+def ask_setup(saved: dict) -> dict:
     """The questions; returns the answers (saved as next time's defaults)."""
     a: dict = {}
-    a["mode"] = mode or choose(
+    a["mode"] = choose(
         "What do you want to run?",
         [
             ("pipeline", "the pipeline on your own log files"),
@@ -216,10 +216,6 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
         "web": f"llm:web:{a.get('site')}",
         "api": f"llm:{a.get('provider')}",
     }[a["llm_kind"]]
-    top = [
-        "--browser",
-        "chrome" if a.get("browser") == "chromium" else a.get("browser", "camoufox"),
-    ]
     services = [
         name
         for name, on in (
@@ -231,7 +227,6 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
     ]
     if a["mode"] == "server":
         cmd = [
-            *top,
             "server",
             "--llm",
             llm,
@@ -248,15 +243,14 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
     commands = []
     if not Path(a["registry"]).exists():
         commands.append(
-            [*top, "calibrate", "--logs", a["logs"], "--registry", a["registry"], "--llm", llm]
+            ["calibrate", "--logs", a["logs"], "--registry", a["registry"], "--llm", llm]
         )
     if not (Path(a["model"]) / "config.json").exists():
         commands.append(
-            ["train-logbert", "--logs", a["logs"], "--registry", a["registry"], "--out", a["model"]]
+            ["train", "--logs", a["logs"], "--registry", a["registry"], "--out", a["model"]]
         )
     commands.append(
         [
-            *top,
             "run",
             "--logs",
             a["logs"],
@@ -301,22 +295,21 @@ def _save(saved: dict, a: dict, signed_in: list[str]) -> None:
 
 
 def start(
-    run: Callable = subprocess.run,
-    launch: Callable[[list[str]], None] | None = None,
-    mode: str | None = None,
+    run: Callable = subprocess.run, launch: Callable[[list[str]], None] | None = None
 ) -> None:
-    """``mode`` skips the first question (``logpipe server`` asks only the server's questions)."""
     load_env()
     saved = json.loads(SAVED.read_text()) if SAVED.exists() else {}
     if saved:
         print(f"defaults are your last answers ({SAVED}); press Enter to keep each one")
-    a = ask_setup(saved, mode)
+    a = ask_setup(saved)
     services, commands = plan(a)
     _save(saved, a, saved.get("signed_in", []))
 
     print("\nThis will run:")
     if services:
         print(f"  docker compose up -d --wait {' '.join(services)}")
+    if a["llm_kind"] == "web":
+        print(f"  with WEB_BROWSER={a['browser']}")
     for cmd in commands:
         print("  logpipe " + " ".join(cmd))
     if a["llm_kind"] == "api" and not any(os.environ.get(k) for k in API_KEY_ENV[a["provider"]]):
@@ -360,6 +353,10 @@ def start(
             )
             signed_in = sorted({*signed_in, a["site"]})
         _save(saved, a, signed_in)
+        os.environ["WEB_BROWSER"] = a[
+            "browser"
+        ]  # this run only; the commands read it from settings
+        get_settings.cache_clear()
     if a["mode"] == "server" and not get_settings().server.admin_password:
         os.environ["LOGPIPE_ADMIN_PASSWORD"] = ask_password()  # this run only; never saved
         get_settings.cache_clear()

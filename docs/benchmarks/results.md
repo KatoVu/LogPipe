@@ -101,7 +101,7 @@ exactly what masking hides (F1 0.40) and the novelty signal catches (0.95).
 
 ## RCA on injected faults (synthetic)
 
-`python -m logpipe.eval.rca_eval`: a web shop's normal traffic for 2 h, then 15 fault modes
+`logpipe eval rca`: a web shop's normal traffic for 2 h, then 15 fault modes
 (SIGTERM, OOM, segfault, disk full, DB port blocked, pool exhausted, gateway timeout, DNS, TLS
 expired, config reload, dependency 503, GC thrash, lock contention, clock skew, API hang) plus
 a bad host, a cross-service trace hop and 2 no-fault controls, 19 in all. Each asks an on-call

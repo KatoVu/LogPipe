@@ -37,7 +37,7 @@ LogPipe/
 | `ask/` | Ask and root-cause analysis | see below |
 | `eval/` | every benchmark | `parsing_eval`, `alias_eval`, `iot_eval`, `logbert_eval`, `rca_eval`, `rcaeval_bench`, `report`, `gate` |
 | `showcase/` | `logpipe showcase` and the web-shop log generator | `ShopGenerator`, `FAULTS` |
-| `bench.py` | `logpipe bench` | — |
+| `bench.py` | `logpipe eval throughput` | — |
 
 ### `logpipe/server/`
 

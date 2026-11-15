@@ -2,29 +2,37 @@
 
 ## `logpipe`
 
-`uv run logpipe <command> …`. Every command has `-h`.
+`uv run logpipe <command> …`. Every command has `-h`. `logpipe` on its own prints the list.
 
 | Command | What it does | Main options |
 |---|---|---|
-| `start` (default) | asks what to run, starts services, runs it | — |
-| `calibrate` | build registry v1 from historical logs, with a holdout-coverage report | `--logs`, `--registry`, `--llm`, `--sample`, `--depth`, `--similarity`, `--dataset` (GA/PA), `--tune` |
-| `replay` | parse files with the frozen registry only, with no learning | `--logs`, `--registry` |
-| `run` | full pipeline: parse → store → enrich → detect | `--store`, `--queue`, `--llm`, `--model`, `--enrich-every`, `--no-enrich`, `--rehydrate`, `--window`, `--stride` |
-| `worker` | learning worker on the unresolved queue (Kafka) | `--queue`, `--store`, `--llm`, `--batch`, `--poll`, `--max-attempts`, `--max-cycles` |
-| `train-logbert` | train LogBERT on per-device windows | `--logs`, `--out`, `--window`, `--stride`, `--hidden`, `--layers`, `--heads`, `--epochs` |
-| `gen-iot` | write the synthetic IoT fleet (history / validation / test) | `--out`, `--devices`, `--history-hours`, `--test-hours`, `--seed` |
+| `start` | asks what to run, starts services, runs it | — |
 | `server` | agent intake + operator UI + learning lifecycle + MCP | `--store`, `--queue`, `--llm`, `--data-dir`, `--epochs`, `--host`, `--port` |
 | `showcase` | guided tour on a generated web shop with a real agent | `--no-ask`, `--auto` |
-| `bench` | how many lines/s one server sustains, with CPU and memory | `--store`, `--max-rate`, `--step-seconds`, `--out` |
-| `fetch-data` | download eval datasets up front | `loghub2k`, `HDFS`, `BGL` |
-| `eval <name>` | `parsing`, `logbert`, `iot`, `alias`, `report`, `gate` | `--out`, `--llm`, `--dataset`, `--epochs`, `--write-baseline` |
+| `calibrate` | build registry v1 from historical logs, with a holdout-coverage report | `--logs`, `--registry`, `--llm`, `--sample`, `--depth`, `--similarity`, `--dataset` (GA/PA), `--tune` |
+| `train` | train LogBERT on per-device windows | `--logs`, `--out`, `--window`, `--stride`, `--hidden`, `--layers`, `--heads`, `--epochs` |
+| `run` | full pipeline: parse → store → enrich → detect | `--store`, `--queue`, `--llm`, `--model`, `--enrich-every`, `--no-enrich`, `--rehydrate`, `--window`, `--stride` |
+| `worker` | learning worker on the Kafka unresolved queue | `--store`, `--llm`, `--batch`, `--poll`, `--max-attempts`, `--max-cycles` |
+| `replay` | parse files with the frozen registry only, with no learning | `--logs`, `--registry` |
+| `gen-iot` | write the synthetic IoT fleet (history / validation / test) | `--out`, `--devices`, `--history-hours`, `--test-hours`, `--seed` |
+| `eval <name>` | benchmarks, their datasets, the report and the CI gate (below) | each has its own `-h` |
 
-Eval modules that aren't `logpipe eval` subcommands run as modules:
+### `logpipe eval`
 
-```sh
-uv run python -m logpipe.eval.rca_eval [--llm …] [--record f.json | --replay f.json]
-uv run python -m logpipe.eval.rcaeval_bench artifacts/eval/rcaeval/tasks/re3-ob [--via mcp] [--llm …] [--fresh]
-```
+Every benchmark writes into `--out` (default `artifacts/eval`), where `report` and `gate` read.
+
+| Subcommand | What it does | Main options |
+|---|---|---|
+| `parsing` | GA/PA on Loghub-2k vs. DeepParse | `--llm`, `--no-tune` |
+| `alias` | alias decisions on labelled template pairs | — |
+| `iot` | synthetic fleet end to end, with ablations | `--llm`, `--devices`, `--test-hours`, `--epochs`, `--threads` |
+| `logbert` | LogBERT on an HDFS or BGL subset | `--dataset`, `--normal`, `--abnormal`, `--max-lines`, `--epochs` |
+| `rca` | root cause on 15 faults injected into a generated web shop | `--llm`, `--record f.json`, `--replay f.json`, `--modes` |
+| `rcaeval` | root cause on RCAEval cases | `TASKS_DIR`, `--via direct\|mcp`, `--llm`, `--limit`, `--fresh` |
+| `throughput` | how many lines/s one server sustains, with CPU and memory | `--store`, `--max-rate`, `--step-seconds`, `--out` |
+| `report` | summarise `--out` into `REPORT.md` | — |
+| `gate` | compare `--out` with `eval/baseline.json` (the nightly CI check) | `--baseline`, `--write-baseline` |
+| `fetch` | download the datasets up front | `loghub2k`, `HDFS`, `BGL` |
 
 ## `make`
 

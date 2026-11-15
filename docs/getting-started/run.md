@@ -3,7 +3,7 @@
 ## 1. Interactive start
 
 ```sh
-uv run logpipe            # same as `logpipe start` or `make start`
+uv run logpipe start      # or `make start`
 ```
 
 It asks what to run (your own logs, or the server for agents), which queue
@@ -66,7 +66,7 @@ End to end on the synthetic fleet:
 ```sh
 uv run logpipe gen-iot --out artifacts/fleet
 uv run logpipe calibrate --logs artifacts/fleet/history
-uv run logpipe train-logbert --logs artifacts/fleet/history
+uv run logpipe train --logs artifacts/fleet/history
 uv run logpipe run --logs artifacts/fleet/test             # --store clickhouse after make docker-up
 ```
 
@@ -74,7 +74,7 @@ uv run logpipe run --logs artifacts/fleet/test             # --store clickhouse 
 
 ```sh
 make docker-up
-uv run logpipe worker --queue kafka --store memory --llm offline         # 1+ terminals
+uv run logpipe worker --store memory --llm offline         # 1+ terminals
 uv run logpipe run --queue kafka --no-enrich --logs artifacts/fleet/test --store memory
 ```
 
@@ -100,7 +100,7 @@ make eval                                            # parsing, alias, IoT, HDFS
 make eval-rcaeval DATASET=re3-ob                     # RCAEval, rules only
 make eval-rcaeval DATASET=re3-ob LLM=llm:anthropic   # + an LLM synthesizer
 make eval-rcaeval DATASET=re3-ob VIA=mcp             # Claude Code over /mcp
-uv run logpipe bench                                 # throughput of one server
+uv run logpipe eval throughput                       # throughput of one server
 ```
 
 [Benchmarks →](../benchmarks/index.md)

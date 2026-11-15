@@ -1,7 +1,24 @@
 import json
 
+import pytest
+
 from logpipe.cli import main
 from tests.conftest import FIXTURES
+
+
+def test_command_shape(capsys):
+    main([])  # no command: help and a pointer to the wizard, nothing runs
+    assert "logpipe start" in capsys.readouterr().out
+    for argv, usage in (
+        (["eval", "rca", "-h"], "logpipe eval rca"),  # passed through to its own parser
+        (["train-logbert", "-h"], "logpipe train"),  # the old name still works
+    ):
+        with pytest.raises(SystemExit) as done:
+            main(argv)
+        assert done.value.code == 0 and usage in capsys.readouterr().out
+    with pytest.raises(SystemExit) as bad:
+        main(["run", "--bogus"])
+    assert bad.value.code == 2
 
 
 def test_calibrate_then_replay(tmp_path, capsys):
@@ -20,7 +37,7 @@ def test_train_then_run_full_pipeline(tmp_path, capsys):
     main(["calibrate", "--logs", str(FIXTURES), "--registry", str(registry)])
     main(
         [
-            "train-logbert",
+            "train",
             "--logs",
             str(FIXTURES),
             "--registry",
