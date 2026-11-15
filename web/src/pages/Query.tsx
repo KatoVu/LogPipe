@@ -192,9 +192,13 @@ export function ResultView({ r }: { r: QueryResult }) {
 export default function Query() {
   const [params, setParams] = useSearchParams();
   const schema = usePoll<Schema>("/api/query/schema", 60000).data;
-  const saved = usePoll<{ queries: Saved[] }>("/api/queries", 30000).data?.queries ?? [];
+  // MongoDB runs the builder's pipelines but has no SQL, so the SQL tab (and SQL-only saved queries) hide
+  const noSql = schema?.engine === "mongodb";
+  const tabs = noSql ? TABS.filter(([t]) => t !== "sql") : TABS;
+  const saved = (usePoll<{ queries: Saved[] }>("/api/queries", 30000).data?.queries ?? []).filter((q) => !noSql || q.spec);
   const initial = params.get("sql") ? "sql" : params.get("plan") ? "ask" : params.get("tab");
-  const [tab, setTabState] = useState<Tab>(TABS.some(([t]) => t === initial) ? initial as Tab : "ask");
+  const [picked, setTabState] = useState<Tab>(TABS.some(([t]) => t === initial) ? initial as Tab : "ask");
+  const tab: Tab = noSql && picked === "sql" ? "builder" : picked;
   const setTab = (t: Tab) => { setTabState(t); setParams((p) => { p.set("tab", t); return p; }, { replace: true }); };
   const [spec, setSpec] = useState<Spec>(EMPTY);
   const [sql, setSql] = useState(params.get("sql") ?? "");
@@ -222,7 +226,7 @@ export default function Query() {
 
   return (
     <>
-      <PageHead title="Query" sub="Ask a question in plain words, build one from a sentence, or write SQL. Everything is read-only." />
+      <PageHead title="Query" sub={`Ask a question in plain words${noSql ? " or" : ","} build one from a sentence${noSql ? "" : ", or write SQL"}. Everything is read-only.`} />
       <div className={tab === "sql" ? "query-layout" : ""}>
         {tab === "sql" && (
           <aside className="query-side">
@@ -250,7 +254,7 @@ export default function Query() {
           <Card>
             <div className="query-tabs">
               <div className="tabs" role="tablist">
-                {TABS.map(([t, text]) => (
+                {tabs.map(([t, text]) => (
                   <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{text}</button>
                 ))}
               </div>
@@ -279,9 +283,9 @@ export default function Query() {
               </form>
             )}
             {currentSql && tab === "builder" && (
-              <details className="gen-sql"><summary className="small">View SQL</summary>
+              <details className="gen-sql"><summary className="small">{noSql ? "View query" : "View SQL"}</summary>
                 <pre className="code-block mono small">{currentSql}</pre>
-                <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>
+                {!noSql && <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>}
               </details>
             )}
             {error && tab !== "ask" && <div className="callout bad" style={{ marginTop: 12 }}>{error.message}</div>}
