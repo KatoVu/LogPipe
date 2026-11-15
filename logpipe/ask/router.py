@@ -50,6 +50,7 @@ _CLOCK = re.compile(
     r"\b(at|around|since|after|before|near)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\b",
     re.IGNORECASE,
 )
+_ANY_CLOCK = re.compile(r"\b\d{1,2}(?::\d{2}|\s*[ap]\.?m\b)", re.IGNORECASE)  # 14:05, 2pm
 _QUOTED = re.compile(r"\"([^\"]{1,100})\"|“([^”]{1,100})”|'([^']{2,100})'")
 _CONTAINING = re.compile(
     r"\b(?:containing|contains|mentioning|matching|with the word)\s+([\w.:/-]{2,100})",
@@ -214,7 +215,8 @@ class RouteOut(BaseModel):
     template_ids: list[int] = Field(default_factory=list)
     anchor_event: str | None = Field(None, description="rca/event: the event in the user's words")
     anchor_time: str | None = Field(
-        None, description="rca: when the user says it happened, ISO 8601 UTC"
+        None,
+        description="rca: only when the question names a clock time; that time on the user's clock, converted to ISO 8601 UTC",
     )
     semantic_query: str | None = Field(None, description="semantic: what kind of line to look for")
     aggregate_fn: Measure | None = None
@@ -241,8 +243,9 @@ Intents:
   Group/aggregate fields: host, service, source, level, status, template_id, or @field for an extracted field.
 - event: occurrences of a specific event: set template_ids if one of the templates above is it, else anchor_event.
 - semantic: lines about a topic the user can't spell exactly ("payment problems"): set semantic_query.
-- rca: why something broke / went down / failed. Set anchor_event (their words), anchor_time if they say when,
-  services/hosts if named, minutes if they give a range.
+- rca: why something broke / went down / failed. Set anchor_event (their words), services/hosts if named,
+  minutes if they give a range. Set anchor_time only when they name a clock time: it is on their clock
+  (UTC{tz}), so convert it to UTC; never later than the current time.
 - summary: what happened over a period, anything unusual.
 
 Examples:
@@ -252,7 +255,8 @@ Q: average response time by host -> {{"intent": "keyword", "aggregate_fn": "avg"
 Q: when did the database restart? -> {{"intent": "event", "services": ["postgres"], "anchor_event": "database restart"}}
 Q: why is the mail system down? (a group "mail" exists) -> {{"intent": "rca", "groups": ["mail"], "anchor_event": "mail system down"}}
 Q: anything about running out of memory -> {{"intent": "semantic", "semantic_query": "out of memory"}}
-Q: why did the server go down around 14:05? -> {{"intent": "rca", "anchor_event": "server went down", "anchor_time": "<today>T14:05:00Z"}}
+Q: why did the server go down around 14:05? (user's clock UTC+02:00) -> {{"intent": "rca", "anchor_event": "server went down", "anchor_time": "<today>T12:05:00Z"}}
+Q: why did checkout break in the last 15 minutes? -> {{"intent": "rca", "services": ["checkout"], "anchor_event": "checkout broke", "minutes": 15}}
 Q: what happened overnight? -> {{"intent": "summary", "minutes": 720}}
 Q: what is a 502? -> {{"intent": "general", "answer": "An HTTP 502 Bad Gateway means ..."}}
 
@@ -353,6 +357,8 @@ def route(
         raise ValueError("the LLM gave no usable answer; try rephrasing")
 
     raw = _from_llm(out)
+    if "anchor_time" in raw and not _ANY_CLOCK.search(question):
+        del raw["anchor_time"]  # no time in the question: the LLM made it up (often in the future)
     try:
         return Routed(validate(raw, catalog, now), "llm", notes)
     except ValueError as error:

@@ -202,3 +202,17 @@ def test_time_range():
 def test_route_schema_is_flat_for_every_provider():
     fields = RouteOut.model_fields
     assert {"intent", "aggregate_fn", "answer"} <= set(fields)
+
+
+def test_llm_anchor_time_only_when_the_question_names_one():
+    future = (NOW + timedelta(hours=8)).isoformat()  # e.g. a local time written as UTC
+    q = "when did the database restart?"  # one the fast path leaves to the model
+    r = route(q, CAT, Scripted(intent="rca", anchor_event="checkout", anchor_time=future), NOW)
+    assert r.via == "llm" and r.spec.anchor_time is None
+    with pytest.raises(ValueError, match="future"):
+        route(
+            "when did the database restart, 11pm?",
+            CAT,
+            Scripted(intent="rca", anchor_time=future),
+            NOW,
+        )
