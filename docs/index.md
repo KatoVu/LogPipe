@@ -110,23 +110,3 @@ MCP can propose but never apply.
 | Hot path | IoT fleet replay | parse p50 **32 µs**, p99 68 µs |
 
 Methods, caveats and full tables: [Benchmarks](benchmarks/index.md).
-
-## Start here
-
-=== "Run the server"
-
-    ```sh
-    cp .env.example .env
-    docker compose up -d clickhouse server    # shipped image, UI on http://localhost:8080
-    ```
-
-    From source, or on your own ClickHouse: [Set up the server](getting-started/server.md).
-
-=== "Guided tour"
-
-    ```sh
-    uv run logpipe showcase --auto   # server + a web shop's logs + a real agent, 8 acts
-    ```
-
-Next: [Install](getting-started/install.md) · [Set up the server](getting-started/server.md) · [Run it](getting-started/run.md) ·
-[Architecture](architecture/index.md) · [Code structure](guides/code-structure.md)
