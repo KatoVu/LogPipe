@@ -171,5 +171,7 @@ logs:
 - **Heartbeat** every 15 s with version, sources, per-source counters and the hash of
   `remote.yaml`. When the server holds a different remote config, the agent fetches it, validates
   it, writes `conf.d/remote.yaml` and reloads. Hand-written files are never touched.
-- **journald** uses `journalctl` (not in the docker image: run the binary on the host for it).
+- **journald** uses `journalctl`. In the container it reads the host journal through the `/var/log`
+  mount and also needs `-v /etc/machine-id:/etc/machine-id:ro` (journalctl only shows this
+  machine's journal). On hosts with a volatile journal, add `-v /run/log/journal:/run/log/journal:ro`.
 - **docker** reads the Engine API on `/var/run/docker.sock`, one stream per container.

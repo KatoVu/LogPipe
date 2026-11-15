@@ -29,7 +29,9 @@ traces, and can drop or mask lines before they leave the host.
     - `/var/log` (read-only) is what it can tail; the Docker socket lets it read container logs;
       the `logpipe-agent` volume keeps file offsets and the send buffer across restarts;
       `conf.d` holds your sources (optional: sources can also be pushed from the UI).
-    - The image has no `journalctl`, so for journald sources run the binary on the host.
+    - For journald sources add `-v /etc/machine-id:/etc/machine-id:ro` (journalctl only shows
+      this machine's journal, found through the `/var/log` mount); on hosts with a volatile
+      journal also add `-v /run/log/journal:/run/log/journal:ro`.
 
 === "Binary"
 
