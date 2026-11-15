@@ -8,6 +8,7 @@ has happened; pressing Enter lets the showcase do it instead. ``--auto`` runs ev
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
@@ -119,6 +120,16 @@ class Tour:
         for line in lines:
             print(f"  {line}")
 
+    def show(self, where: str) -> None:
+        """Open ``where`` (a UI path, or a full link) in the browser, so you land on what to look at."""
+        url = where if where.startswith("http") else f"{self.url}{where}"
+        if not self.auto:
+            import webbrowser
+
+            with contextlib.suppress(webbrowser.Error):
+                webbrowser.open(url)
+        self.say(f"→ look here: {url}", B, 2)
+
     def say(self, text: str, style: str = D, indent: int = 4) -> None:
         """A line of output under the current act, wrapped to the terminal at spaces only, so a
         link is never cut or split (one longer than the line just runs on); clears a counter line first."""
@@ -150,10 +161,12 @@ class Tour:
         live: Callable[[], str] | None = None,
         steps: Callable[[], list[str]] | None = None,
         give_up: str = "",
+        show: str | Callable[[], str] | None = None,
     ) -> None:
         """Until ``done()``; Enter (or --auto) runs ``do`` instead of waiting for the UI.
         ``live`` is a counter (lines collected, your review); ``steps`` gives the background
-        job's new steps (LLM prompts, answers, epochs), each printed as it happens. With
+        job's new steps (LLM prompts, answers, epochs), each printed as it happens. When Enter did
+        it for you, ``show`` (a UI path, or a function giving one) opens where to look. With
         ``give_up``, a timeout prints it and the tour goes on instead of stopping. When ``do``
         is refused or its job fails, the reason is printed and Enter tries again."""
         hint = " (or press Enter and I'll do it)" if do else ""
@@ -185,6 +198,8 @@ class Tour:
             elif did or not do:
                 time.sleep(1.0)
         self.say(f"✓ {what}", G, 2)
+        if did and show:
+            self.show(_ask(show, "") if callable(show) else show)
 
     def _try(self, do: Callable[[], None]) -> bool:
         """``do()``; False (with the server's reason printed) when the server refused it."""
@@ -448,7 +463,12 @@ def _tour(
     def connected() -> bool:
         return any(a["hostname"] == HOST and a["online"] for a in api("/api/agents")["agents"])
 
-    t.wait(f"agent {HOST} connected (see it on the Agents page)", connected, do=start_agent)
+    t.wait(
+        f"agent {HOST} connected (see it on the Agents page)",
+        connected,
+        do=start_agent,
+        show="/agents",
+    )
 
     def online() -> bool:
         agents = api("/api/agents")["agents"]
@@ -488,7 +508,12 @@ def _tour(
     print(f"  alias lpa={shlex.quote(shlex.join(lpa))}")
     for svc in shop:
         print(f"  lpa {shlex.join(track(svc))}")
-    t.wait(f"agent {HOST} online with 3 sources (see it on the Agents page)", online, do=track_all)
+    t.wait(
+        f"agent {HOST} online with 3 sources (see it on the Agents page)",
+        online,
+        do=track_all,
+        show=f"/agents/{HOST}",
+    )
     t.pause()
 
     t.act(
@@ -527,6 +552,7 @@ def _tour(
         drafted,
         lambda: api("/api/review/generate", {"sample_cap": 2000}),
         steps=_job_steps(api, "draft"),
+        show=lambda: f"/review/{b['id']}" if (b := batch()) else "/setup",
     )
     t.pause()
 
@@ -583,6 +609,7 @@ def _tour(
         do_review,
         live=reviewed,
         steps=_job_steps(api, "apply", "retrain"),
+        show="/streams",
     )
     t.pause()
 
@@ -680,6 +707,10 @@ def _tour(
             f"✓ 'payment … approved' is linked to #{reworded['alias_of']}: the LLM confirmed it is the same event",
             G,
         )
+        if reworded.get("link_reason"):
+            t.say(f"  its reason: {reworded['link_reason']}")
+        # in production this happens silently; here, see it: the template, marked 'linked by LLM'
+        t.show(f"/templates?id={reworded['template_id']}")
     else:
         t.say(
             "'payment … approved' stays a new template: a rewording is only linked when an LLM confirms it, and "
@@ -709,6 +740,7 @@ def _tour(
                 is not None
             ),
             link,
+            show=f"/templates?id={reworded['template_id']}",
         )
     t.say(
         "Linked lines count as the old event: the shop-api model needs no retrain and raises no alert for the change.",
@@ -781,6 +813,7 @@ def _tour(
         do_inv,
         live=inv_reviewed,
         steps=_job_steps(api, "apply", "retrain"),
+        show="/templates",
     )
 
     t.act(
@@ -816,8 +849,8 @@ def _ask_act(t: Tour, api: Api) -> None:
             f"First a {B}group{R}: on {B}Streams & models{R}, the shop's three streams (nginx, shop-api, postgres)",
             f"become one group, {B}shop{R}, so a question can name all of them at once. I'll make it now.",
             f"Then {B}Query → Ask{R} (or press {B}g k{R}) and ask: {B}{ASK_QUESTION}{R}",
-            "Nothing runs on its own: each round lists its read-only queries (open one to see the exact SQL)",
-            f"and waits for {B}Run all{R}. It first looks for when things broke, then reads around that moment and",
+            f"Nothing runs until you say so: it lists its read-only queries and waits for {B}Run{R}, once per",
+            "question (the follow-up rounds it needs run on their own). It first looks for when things broke, then reads around that moment and",
             "ranks what changed against the day before. The answer cites the lines it rests on (L3, T12);",
             "without an LLM it shows the top of that ranking as leads instead of a diagnosis.",
         ],
@@ -866,7 +899,8 @@ def _ask_act(t: Tour, api: Api) -> None:
         lambda: answered() is not None,
         ask,
         timeout=600,
-        give_up="no answer yet: open Query → Ask and approve its rounds, or ask again.",
+        give_up="no answer yet: open Query → Ask and approve it, or ask again.",
+        show=lambda: f"/query?tab=ask&plan={a['id']}" if (a := answered()) else "/query?tab=ask",
     )
     if done := answered():
         result = api(f"/api/ask/{done['id']}")["result"] or {}
@@ -979,6 +1013,7 @@ def _dd_export(t: Tour, dd: ShowcaseDatadog) -> None:
         "the 'logpipe (auto)' pipeline in Datadog",
         dd.pipeline,
         lambda: t.api("/api/datadog/pipeline", {}),
+        show=dd.links["pipelines"],
     )
     t.pause()
 
