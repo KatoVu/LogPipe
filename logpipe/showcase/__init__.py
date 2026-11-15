@@ -167,7 +167,7 @@ class Tour:
                 reason = e.reason
             if self.auto:
                 raise SystemExit(f"the server refused it: {reason}") from None
-            self.say(f"the server refused it: {reason}; press Enter to try again", Y, 2)
+            self.say(f"the server refused it: {reason}; press Enter to try again", Y, 2, wrap=True)
             return False
 
     def pause(self, text: str = "press Enter for the next act") -> None:
