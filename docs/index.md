@@ -49,7 +49,7 @@ and visual query layer, an approval-gated "Ask" box and an MCP endpoint for AI a
 
     ---
 
-    Memory, ClickHouse or MongoDB storage; an in-process or Kafka queue; offline rules, a hosted API, a fine-tuned model or your signed-in web chat as the LLM. [Replacing components →](guides/replace-components.md)
+    Memory, ClickHouse or MongoDB storage; an in-process or Kafka queue; offline rules, a hosted API or a fine-tuned model as the LLM. [Replacing components →](guides/replace-components.md)
 
 </div>
 
@@ -110,30 +110,3 @@ MCP can propose but never apply.
 | Hot path | IoT fleet replay | parse p50 **32 µs**, p99 68 µs |
 
 Methods, caveats and full tables: [Benchmarks](benchmarks/index.md).
-
-## Start here
-
-=== "Try it in a browser"
-
-    ```sh
-    uv sync --group dev
-    uv run logpipe demo          # synthetic IoT fleet, the whole pipeline live in a page
-    ```
-
-=== "Run the server"
-
-    ```sh
-    cp .env.example .env
-    docker compose up -d clickhouse server    # shipped image, UI on http://localhost:8080
-    ```
-
-    From source, or on your own ClickHouse: [Set up the server](getting-started/server.md).
-
-=== "Guided tour"
-
-    ```sh
-    uv run logpipe showcase --auto   # server + a web shop's logs + a real agent, 8 acts
-    ```
-
-Next: [Install](getting-started/install.md) · [Set up the server](getting-started/server.md) · [Run it](getting-started/run.md) ·
-[Architecture](architecture/index.md) · [Code structure](guides/code-structure.md)

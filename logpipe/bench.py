@@ -1,4 +1,4 @@
-"""``logpipe bench``: how many log lines one server keeps up with, and what that costs.
+"""``logpipe eval throughput``: how many log lines one server keeps up with, and what that costs.
 
 A real :class:`~logpipe.server.core.Server` (calibrated on the synthetic IoT fleet's history,
 offline LLM, no anomaly models) is fed the fleet's live phase through its intake at rising rates.

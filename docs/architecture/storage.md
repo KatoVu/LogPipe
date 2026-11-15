@@ -61,6 +61,6 @@ and PCRE share, so every backend agrees.
 | Survives restart | no (only `--data-dir`) | yes | yes |
 | Query p95 / percentiles | SQLite | native | `$percentile` |
 | Read-only guard | SQLite `query_only` on a copy | `readonly=2` + RO user + table-function block | `check()` + RO URI |
-| Ingest measured (`logpipe bench`) | ~10k lines/s (one core, GIL-bound) | ~5k lines/s, insert p99 ~55 ms | — |
+| Ingest measured (`logpipe eval throughput`) | ~10k lines/s (one core, GIL-bound) | ~5k lines/s, insert p99 ~55 ms | — |
 
 To add a backend, see [Replacing components](../guides/replace-components.md#a-storage-backend).

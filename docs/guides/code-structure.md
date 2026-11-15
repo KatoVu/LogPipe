@@ -3,7 +3,7 @@
 ```
 LogPipe/
 ├── logpipe/                 the product (Python package, CLI `logpipe`)
-├── DeepParse/               mask synthesis, Drain, chat providers, web-chat scraper (package `deepparse`)
+├── DeepParse/               mask synthesis, Drain, chat providers (package `deepparse`)
 ├── agent/                   logpipe-agent, the Go collector
 ├── web/                     operator UI (React + TypeScript + Vite), built into logpipe/server/static
 ├── tests/                   pytest for logpipe (DeepParse has DeepParse/tests)
@@ -36,9 +36,8 @@ LogPipe/
 | `server/` | `logpipe server` | see below |
 | `ask/` | Ask and root-cause analysis | see below |
 | `eval/` | every benchmark | `parsing_eval`, `alias_eval`, `iot_eval`, `logbert_eval`, `rca_eval`, `rcaeval_bench`, `report`, `gate` |
-| `demo/` | `logpipe demo` (one-file app with its own page) | `Demo`, `serve()` |
 | `showcase/` | `logpipe showcase` and the web-shop log generator | `ShopGenerator`, `FAULTS` |
-| `bench.py` | `logpipe bench` | — |
+| `bench.py` | `logpipe eval throughput` | — |
 
 ### `logpipe/server/`
 
@@ -78,8 +77,8 @@ LogPipe/
 |---|---|
 | `drain/` | `DrainEngine` (typed-placeholder masks), mask application |
 | `synth/` | mask synthesis: offline stub, HF DeepSeek-R1 + LoRA, chat provider |
-| `providers/` | `ChatProvider` protocol + Anthropic, OpenAI, Gemini, Groq, and `web` (a signed-in chat app) |
-| `ai_scraper/` | Playwright driver for Gemini / Claude / ChatGPT web apps: sessions, sites as data, cookie rejection |
+| `providers/` | `ChatProvider` protocol + Anthropic, OpenAI, Gemini, Groq, and `web` ([web chat](../getting-started/web-chat.md)) |
+| `ai_scraper/` | the [web chat](../getting-started/web-chat.md) driver (Playwright) |
 | `metrics/`, `evaluation/` | GA / PA and the paper's evaluation runner |
 | `training/`, `tools/` | LoRA fine-tune, training-set builders, Loghub fetchers, the IoT fleet generator |
 
@@ -87,7 +86,9 @@ LogPipe/
 
 | Path | Responsibility |
 |---|---|
-| `main.go` | CLI: `init`, `run`, `track` / `untrack` / `list`, `config get\|set\|edit\|show\|path`, `status`, `check`, `version` |
+| `main.go` | CLI: `init`, `run`, `track` / `untrack` / `list`, `config get\|set\|edit\|show\|path`, `status`, `check`, `service install\|uninstall`, `version` |
+| `service.go` | `service install` / `uninstall`: a systemd unit or launchd plist that runs the agent at boot |
+| `install.sh` | downloads the release binary for this OS/arch and checks its sha256 |
 | `internal/config` | `agent.yaml` + `conf.d/*.yaml` (Datadog layout), remote config |
 | `internal/source` | tail files (with rotation and offsets), journald, docker socket, syslog |
 | `internal/process` | multiline aggregation, then exclude / include / mask rules in written order |

@@ -6,7 +6,7 @@ Lines the fast parser does not recognise are stored as `PENDING` and handed to t
 - **several workers**: `logpipe worker` processes form a consumer group and share
   the topic's partitions.
 
-`QUEUE=memory` (the default) keeps the old single-process behaviour; nothing changes for tests, `make demo` or the evaluation.
+`QUEUE=memory` (the default) keeps the old single-process behaviour; nothing changes for tests, `make fleet` or the evaluation.
 
 ## How it works
 
@@ -14,7 +14,7 @@ Lines the fast parser does not recognise are stored as `PENDING` and handed to t
 logpipe run --queue kafka --no-enrich      (fast path, producer group)
     parse -> store PENDING -> produce to logpipe.unresolved  (never blocks)
 
-logpipe worker --queue kafka               (learning workers, consumer group)
+logpipe worker                            (learning workers, consumer group)
     consume batch -> cluster -> LLM once per cluster -> publish registry v.N+1
     -> backfill FINAL rows -> re-queue / dead-letter the rest -> commit offsets
 ```
@@ -56,7 +56,7 @@ starts ClickHouse and a one-broker Kafka (KRaft, no ZooKeeper) on `localhost:909
 Then, in two terminals:
 
 ```bash
-uv run logpipe worker --queue kafka --store memory --llm offline
+uv run logpipe worker --store memory --llm offline
 ```
 
 ```bash

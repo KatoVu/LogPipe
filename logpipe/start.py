@@ -64,16 +64,6 @@ def text(question: str, default: str, check: Callable[[str], str | None] = lambd
         print(f"  {error}")
 
 
-def number(question: str, default: float, cast: type = int) -> float:
-    def bad(answer: str) -> str | None:
-        try:
-            return None if cast(answer) > 0 else "must be positive"
-        except ValueError:
-            return "not a number"
-
-    return cast(text(question, str(default), bad))
-
-
 def confirm(question: str, default: bool = True) -> bool:
     answer = _ask(f"\n{question} [{'Y/n' if default else 'y/N'}]: ").lower()
     return default if not answer else answer.startswith("y")
@@ -142,7 +132,6 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
     a["mode"] = mode or choose(
         "What do you want to run?",
         [
-            ("demo", "browser demo: a live synthetic IoT fleet through every stage"),
             ("pipeline", "the pipeline on your own log files"),
             ("server", "the server for logpipe-agent hosts, with the operator UI"),
         ],
@@ -154,7 +143,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             ("memory", "in-process, nothing to install (straightforward)"),
             ("kafka", "Kafka broker in Docker, started for you"),
         ],
-        saved.get("queue"),
+        saved.get("queue", "kafka"),
     )
     a["store"] = choose(
         "Where do parsed rows go?",
@@ -164,14 +153,10 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
                 "in memory, gone when the run ends"
                 + (" (API keys and agents too)" if a["mode"] == "server" else ""),
             ),
-            (
-                "clickhouse",
-                "ClickHouse in Docker, started for you"
-                + (" (the demo's Query tab then runs on it)" if a["mode"] == "demo" else ""),
-            ),
+            ("clickhouse", "ClickHouse in Docker, started for you"),
             ("mongodb", "MongoDB in Docker, started for you (everything except raw SQL)"),
         ],
-        saved.get("store"),
+        saved.get("store", "mongodb"),
     )
     a["llm_kind"] = choose(
         "Who names slot keys and confirms template re-associations?",
@@ -180,7 +165,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             ("web", "a chat site driven in a browser (web scrape), no API key"),
             ("api", "a hosted API, needs its API key in the environment or .env"),
         ],
-        saved.get("llm_kind"),
+        saved.get("llm_kind", "web"),
     )
     if a["llm_kind"] == "web":
         a["site"] = choose(
@@ -189,15 +174,15 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
                 (name, "works signed out" if site.anonymous else "needs a one-time sign-in")
                 for name, site in sorted(SITES.items())
             ],
-            saved.get("site"),
+            saved.get("site", "gemini"),
         )
         browsers = [
-            ("camoufox", "bundled Firefox build (one-time download)"),
             ("chromium", "the chromium on your PATH"),
+            ("camoufox", "bundled Firefox build (one-time download)"),
         ]
-        if shutil.which("chromium"):  # nothing to download, so offer it first
-            browsers.reverse()
-        a["browser"] = choose("Which browser drives it?", browsers, saved.get("browser"))
+        a["browser"] = choose(
+            "Which browser drives it?", browsers, saved.get("browser", "chromium")
+        )
     elif a["llm_kind"] == "api":
         a["provider"] = choose(
             "Which provider?",
@@ -205,37 +190,12 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             saved.get("provider"),
         )
 
-    if a["mode"] == "demo":
-        a["masks"] = choose(
-            "Where do the regex masks come from?",
-            [
-                (
-                    "calibrate",
-                    "calibrate on the demo history once, then reuse it (artifacts/demo/)",
-                ),
-                ("recalibrate", "calibrate again, replacing that saved calibration"),
-                ("file", "a registry saved on Colab with the fine-tuned model"),
-            ],
-            saved.get("masks"),
-        )
-        if a["masks"] == "file":
-            a["registry"] = text(
-                "Registry file", saved.get("registry", "demo_registry.json"), _exists("registry")
-            )
-        a["devices"] = number("Devices per kind", saved.get("devices", 2))
-        a["test_hours"] = number(
-            "Hours of live stream (event time)", saved.get("test_hours", 1), float
-        )
-        a["port"] = int(text("Port for the page", str(saved.get("port", 8000)), _free_port))
-    elif a["mode"] == "server":
+    if a["mode"] == "server":
         a["server_port"] = int(
             text("Port for agents and the UI", str(saved.get("server_port", 8080)), _free_port)
         )
         a["data_dir"] = text(
             "Directory for the registry and models", saved.get("data_dir", "artifacts/server")
-        )
-        a["with_demo"] = confirm(
-            "Also serve the developer demo at /demo/?", saved.get("with_demo", False)
         )
     else:
         a["logs"] = text("Log directory", saved.get("logs", "logs"), _exists("directory"))
@@ -256,10 +216,6 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
         "web": f"llm:web:{a.get('site')}",
         "api": f"llm:{a.get('provider')}",
     }[a["llm_kind"]]
-    top = [
-        "--browser",
-        "chrome" if a.get("browser") == "chromium" else a.get("browser", "camoufox"),
-    ]
     services = [
         name
         for name, on in (
@@ -269,31 +225,8 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
         )
         if on
     ]
-    if a["mode"] == "demo":
-        cmd = [
-            *top,
-            "demo",
-            "--llm",
-            llm,
-            "--queue",
-            a["queue"],
-            "--store",
-            a["store"],
-            "--devices",
-            str(a["devices"]),
-            "--test-hours",
-            str(a["test_hours"]),
-            "--port",
-            str(a["port"]),
-        ]
-        if a["masks"] == "file":
-            cmd += ["--registry", a["registry"]]
-        elif a["masks"] == "recalibrate":
-            cmd.append("--recalibrate")
-        return services, [cmd]
     if a["mode"] == "server":
         cmd = [
-            *top,
             "server",
             "--llm",
             llm,
@@ -306,19 +239,18 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
             "--data-dir",
             a["data_dir"],
         ]
-        return services, [cmd + ["--demo"] if a["with_demo"] else cmd]
+        return services, [cmd]
     commands = []
     if not Path(a["registry"]).exists():
         commands.append(
-            [*top, "calibrate", "--logs", a["logs"], "--registry", a["registry"], "--llm", llm]
+            ["calibrate", "--logs", a["logs"], "--registry", a["registry"], "--llm", llm]
         )
     if not (Path(a["model"]) / "config.json").exists():
         commands.append(
-            ["train-logbert", "--logs", a["logs"], "--registry", a["registry"], "--out", a["model"]]
+            ["train", "--logs", a["logs"], "--registry", a["registry"], "--out", a["model"]]
         )
     commands.append(
         [
-            *top,
             "run",
             "--logs",
             a["logs"],
@@ -358,29 +290,26 @@ def docker_up(services: list[str], run: Callable = subprocess.run) -> None:
 
 def _save(saved: dict, a: dict, signed_in: list[str]) -> None:
     SAVED.parent.mkdir(exist_ok=True)
-    # A one-off recalibration must not become the default.
-    masks = {"masks": "calibrate"} if a.get("masks") == "recalibrate" else {}
     # Merge so answers to questions this run skipped (another mode, another LLM) survive.
-    SAVED.write_text(json.dumps(saved | a | masks | {"signed_in": signed_in}, indent=2))
+    SAVED.write_text(json.dumps(saved | a | {"signed_in": signed_in}, indent=2))
 
 
 def start(
-    run: Callable = subprocess.run,
-    launch: Callable[[list[str]], None] | None = None,
-    mode: str | None = None,
+    run: Callable = subprocess.run, launch: Callable[[list[str]], None] | None = None
 ) -> None:
-    """``mode`` skips the first question (``logpipe demo`` asks only the demo's questions)."""
     load_env()
     saved = json.loads(SAVED.read_text()) if SAVED.exists() else {}
     if saved:
         print(f"defaults are your last answers ({SAVED}); press Enter to keep each one")
-    a = ask_setup(saved, mode)
+    a = ask_setup(saved)
     services, commands = plan(a)
     _save(saved, a, saved.get("signed_in", []))
 
     print("\nThis will run:")
     if services:
         print(f"  docker compose up -d --wait {' '.join(services)}")
+    if a["llm_kind"] == "web":
+        print(f"  with WEB_BROWSER={a['browser']}")
     for cmd in commands:
         print("  logpipe " + " ".join(cmd))
     if a["llm_kind"] == "api" and not any(os.environ.get(k) for k in API_KEY_ENV[a["provider"]]):
@@ -424,6 +353,10 @@ def start(
             )
             signed_in = sorted({*signed_in, a["site"]})
         _save(saved, a, signed_in)
+        os.environ["WEB_BROWSER"] = a[
+            "browser"
+        ]  # this run only; the commands read it from settings
+        get_settings.cache_clear()
     if a["mode"] == "server" and not get_settings().server.admin_password:
         os.environ["LOGPIPE_ADMIN_PASSWORD"] = ask_password()  # this run only; never saved
         get_settings.cache_clear()

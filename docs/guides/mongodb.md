@@ -19,7 +19,7 @@ read it through MongoDB aggregations. See [Storage](../architecture/storage.md) 
 2. Start it, either the whole platform or only MongoDB with the server from source:
 
     ```sh
-    docker compose --profile platform-mongo up -d    # MongoDB + server + demo generator + agent
+    docker compose --profile platform-mongo up -d    # MongoDB + the server container
     # or
     docker compose --profile mongo up -d mongo
     uv run logpipe server --store mongodb            # or STORE=mongodb in .env

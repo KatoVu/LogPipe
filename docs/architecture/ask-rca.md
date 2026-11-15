@@ -137,4 +137,3 @@ candidates (plus a strong hint) as *leads*, labelled a ranking, not a diagnosis.
 - **Evals**: `rca_eval.py` (19 injected faults) and `rcaeval_bench.py` (RCAEval)
   ([Benchmarks](../benchmarks/index.md)).
 
-Design history and decisions: [AI root cause records](../plan/ai-rca/tech-decisions.md).

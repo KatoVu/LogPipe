@@ -112,6 +112,9 @@ make eval-rcaeval DATASET=re3-ob VIA=mcp LIMIT=3 VARIANTS=mcp+ask      # a quick
 make eval-rcaeval DATASET=re3-ob FRESH=1                               # ignore the cache
 ```
 
+The Gemini rows were run through a signed-in web chat. To set that up, see
+[Web chat as the LLM](../getting-started/web-chat.md). Any `LLM=llm:<provider>` works instead.
+
 The first run exports the dataset (downloads ~4 GB into `artifacts/eval/rcaeval/data`). Each
 line of output is one answer, with a block progress bar:
 

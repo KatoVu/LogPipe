@@ -8,9 +8,9 @@ Each stage has its own benchmark, so a regression points at the component that c
 | **Alias** | wrong and missed merges of reworded templates | 28 hand-labelled template pairs | `make eval-alias` |
 | **IoT end to end** | P / R / F1 of alerts, resolve lag, PENDING left, LLM calls | synthetic fleet with a firmware rollout and injected anomalies | `make eval-iot` |
 | **LogBERT** | F1 per unknown-template mode, novelty on/off | HDFS, BGL (CPU-sized subsets) | `make eval-hdfs`, `make eval-bgl` |
-| **RCA, synthetic** | evidence recall, answer correctness, ablations | 15 injected faults + 2 controls (+2) on a generated web shop | `python -m logpipe.eval.rca_eval` |
+| **RCA, synthetic** | evidence recall, answer correctness, ablations | 15 injected faults + 2 controls (+2) on a generated web shop | `logpipe eval rca` |
 | **RCA, RCAEval** | AC@1/3/5, Avg@5 by fault type | real microservice testbeds (RCAEval RE2/RE3) | `make eval-rcaeval` |
-| **Throughput** | lines/s one server sustains, CPU, RSS, latency | IoT fleet replayed at rising rates | `logpipe bench` |
+| **Throughput** | lines/s one server sustains, CPU, RSS, latency | IoT fleet replayed at rising rates | `logpipe eval throughput` |
 
 ## How they're run
 

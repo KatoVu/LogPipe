@@ -28,7 +28,6 @@ flowchart LR
 | the unresolved queue | `unresolved/base.py:UnresolvedQueue` | `unresolved/__init__.py:open_queue` | `--queue`, `QUEUE` |
 | the LLM for masks / keys / aliases / Ask | `enrich/llm.py:LLMAdapter` | `enrich/llm.py:get_adapter` | `--llm`, `LLM_BACKEND` |
 | a hosted chat vendor | `deepparse/providers/base.py:ChatProvider` | `deepparse/providers/registry.py` | `llm:<name>[:<model>]` |
-| a web chat site | `deepparse/ai_scraper/sites.py:ChatSite` | `SITES` in the same file | `llm:web:<site>` |
 | the anomaly model | `anomaly/scorer.py:Scorer` | where the pipeline / server loads models | `--model`, per-stream dirs |
 | the template vector index | `search()` + `neighbours()` of `ask/index.py:TemplateIndex` | `AskService.index_for` | `LOGPIPE_ASK_MODEL` for the text model |
 | Drain parameters | — | `parsing/engine.py:make_engine` | `calibrate --depth --similarity --tune` |
@@ -112,31 +111,8 @@ kind of call.
 One module implementing `ChatProvider` (`name`, `default_model`, `build()` returning a
 LangChain chat model, `structured()` returning `{"raw", "parsed", "parsing_error"}`, and
 `price()`), and one line in `providers/registry.py`. It's then usable as `llm:<name>` and
-`llm:<name>:<model>` everywhere: CLI, server, evals, `make … LLM=llm:<name>`.
-
-## A web chat site
-
-Sites are data (`deepparse/ai_scraper/sites.py`):
-
-```python
-"mychat": ChatSite(
-    name="MyChat",
-    url="https://mychat.example/new",                 # opening it starts a fresh chat
-    composer=("div[contenteditable='true']",),         # most specific first
-    send_button=("button[aria-label='Send']",),
-    generating=("button[aria-label='Stop']",),         # present only while streaming
-    responses=("div.assistant-message",),              # one per reply, in order
-    login_urls=("/login",),
-    logged_out=("a[href*='login']",),
-    error_banners=("[role='alert']",),
-    reject_cookies=("button:has-text('Reject all')",), # answered automatically
-    more_cookie_options=(),                            # what reveals a hidden reject button
-),
-```
-
-When a site redesigns, add a selector at the **front** of the tuple; no code change. Check with
-`make web-check SITE=mychat` and `make web-ask SITE=mychat PROMPT="Reply with OK."`. A failed
-run saves the page, a screenshot and the error under `DeepParse/.webchat/errors/`.
+`llm:<name>:<model>` everywhere: CLI, server, evals, `make … LLM=llm:<name>`. A new chat web site is data, not
+code: see [Web chat as the LLM](../getting-started/web-chat.md#when-a-site-changes).
 
 ## The anomaly model
 
