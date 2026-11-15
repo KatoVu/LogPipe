@@ -16,6 +16,8 @@ import time
 from ..settings import get_settings
 
 COOKIE = "logpipe_session"
+# A new server's password until someone sets their own; sessions with it may only change it.
+DEFAULT_PASSWORD = "changeme"
 _N, _R, _P = 2**14, 8, 1
 
 
@@ -50,6 +52,11 @@ class Auth:
     def configured(self) -> bool:
         return bool(self._doc.get("hash"))
 
+    @property
+    def must_change(self) -> bool:
+        """Still the default password: every /api route but /api/auth/* is refused until it changes."""
+        return bool(self._doc.get("default"))
+
     def set_password(self, password: str) -> None:
         if len(password) < (n := get_settings().server.min_password_length):
             raise ValueError(f"the password needs at least {n} characters")
@@ -60,22 +67,22 @@ class Auth:
                 "hash": hash_password(password),
                 "secret": secrets.token_hex(32),
                 "changed_at": time.time(),
+                "default": password == DEFAULT_PASSWORD,
             },
         )
 
     def ensure(self, from_env: str | None) -> str | None:
         """At startup: ``from_env`` (LOGPIPE_ADMIN_PASSWORD) always wins, so a forgotten password
-        is reset by setting it; with neither a stored nor an env password, one is generated and
-        returned so the caller can print it once."""
+        is reset by setting it; with neither a stored nor an env password, the default one is
+        set and returned so the caller can print it (the first login must replace it)."""
         if from_env:
             if not (self.configured and verify_password(from_env, self._doc["hash"])):
                 self.set_password(from_env)
             return None
         if self.configured:
             return None
-        generated = secrets.token_urlsafe(12)
-        self.set_password(generated)
-        return generated
+        self.set_password(DEFAULT_PASSWORD)
+        return DEFAULT_PASSWORD
 
     def blocked_for(self, client: str) -> float:
         """Seconds until ``client`` may try again (0 when it may)."""

@@ -115,14 +115,14 @@ def _listener(port: int) -> str | None:
 
 
 def ask_password() -> str:
-    """The UI's admin password ('' keeps the stored one, or generates one on a first start)."""
+    """The UI's admin password ('' keeps the stored one, or the default on a first start)."""
     import getpass
 
     while True:
         try:
             pw = getpass.getpass(
                 "Admin password for the UI (Enter keeps the current one; a new "
-                "server generates and prints one): "
+                "server starts with 'changeme' and asks for a new one at first login): "
             )
         except EOFError:
             raise SystemExit("\nstopped") from None

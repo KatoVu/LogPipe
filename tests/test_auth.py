@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from logpipe.enrich.llm import get_adapter
 from logpipe.server import auth as auth_mod
 from logpipe.server.app import create_app
-from logpipe.server.auth import Auth, hash_password, verify_password
+from logpipe.server.auth import DEFAULT_PASSWORD, Auth, hash_password, verify_password
 from logpipe.server.control import ControlStore
 from logpipe.server.core import Server
 from logpipe.settings import get_settings
@@ -45,7 +45,11 @@ def test_api_needs_login_but_intake_and_ui_shell_do_not(env):
     _, client, agent = env
     assert client.get("/api/overview").status_code == 401
     assert client.get("/api/docs").status_code == 401
-    assert client.get("/api/auth/status").json() == {"required": True, "authenticated": False}
+    assert client.get("/api/auth/status").json() == {
+        "required": True,
+        "authenticated": False,
+        "must_change": False,
+    }
     assert client.get("/intake/v1/ping", headers=agent).status_code == 200
     assert client.get("/").status_code in (200, 503)  # the SPA shell renders the login page
     assert client.post("/api/auth/login", json={"password": "nope"}).status_code == 401
@@ -99,10 +103,27 @@ def test_changing_the_password_signs_other_sessions_out(env):
     assert not Auth(control).valid(other)
 
 
-def test_startup_generates_once_and_env_resets():
+def test_startup_sets_the_default_once_and_env_resets():
     control = ControlStore()
-    first = Auth(control).ensure(None)
-    assert first and Auth(control).login("t", first)
+    assert Auth(control).ensure(None) == DEFAULT_PASSWORD
+    assert Auth(control).must_change and Auth(control).login("t", DEFAULT_PASSWORD)
+    Auth(control).set_password("mine-now!")
     assert Auth(control).ensure(None) is None  # kept across restarts
+    assert Auth(control).login("t", "mine-now!") and not Auth(control).must_change
     assert Auth(control).ensure("from-the-env") is None
-    assert Auth(control).login("t", "from-the-env") and not Auth(control).login("t", first)
+    assert Auth(control).login("t", "from-the-env") and not Auth(control).login("t", "mine-now!")
+
+
+def test_the_default_password_only_lets_you_change_it(env):
+    control, client, agent = env
+    Auth(control).set_password(DEFAULT_PASSWORD)
+    assert client.post("/api/auth/login", json={"password": DEFAULT_PASSWORD}).status_code == 200
+    assert client.get("/api/auth/status").json()["must_change"] is True
+    assert client.get("/api/overview").status_code == 403
+    assert client.get("/intake/v1/ping", headers=agent).status_code == 200  # agents unaffected
+    same = {"current": DEFAULT_PASSWORD, "new": DEFAULT_PASSWORD}
+    assert client.post("/api/auth/password", json=same).status_code == 400
+    new = {"current": DEFAULT_PASSWORD, "new": "battery staple"}
+    assert client.post("/api/auth/password", json=new).status_code == 200
+    assert client.get("/api/auth/status").json()["must_change"] is False
+    assert client.get("/api/overview").status_code == 200
