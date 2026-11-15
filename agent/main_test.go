@@ -77,7 +77,7 @@ func TestUntrackRefusesRemote(t *testing.T) {
 }
 
 func TestServiceFile(t *testing.T) {
-	path, body, err := serviceFile("linux", false, "/home/u/.local/bin/logpipe-agent", "/home/u/.config/logpipe-agent", "/home/u")
+	path, body, err := serviceFile("linux", false, "/home/u/.local/bin/logpipe-agent", "/home/u/.config/logpipe-agent", "/home/u/.config")
 	if err != nil || path != "/home/u/.config/systemd/user/logpipe-agent.service" ||
 		!strings.Contains(body, `ExecStart="/home/u/.local/bin/logpipe-agent" -c "/home/u/.config/logpipe-agent" run`) ||
 		!strings.Contains(body, "WantedBy=default.target") {
@@ -86,7 +86,7 @@ func TestServiceFile(t *testing.T) {
 	if path, body, _ := serviceFile("linux", true, "/usr/local/bin/logpipe-agent", "/etc/logpipe-agent", "/root"); path != "/etc/systemd/system/logpipe-agent.service" || !strings.Contains(body, "WantedBy=multi-user.target") {
 		t.Fatalf("linux root: %s\n%s", path, body)
 	}
-	path, body, _ = serviceFile("darwin", false, "/Users/a&b/.local/bin/logpipe-agent", "/Users/a&b/cfg", "/Users/a&b")
+	path, body, _ = serviceFile("darwin", false, "/Users/a&b/.local/bin/logpipe-agent", "/Users/a&b/cfg", "/Users/a&b/Library")
 	if path != "/Users/a&b/Library/LaunchAgents/io.logpipe.agent.plist" || !strings.Contains(body, "<string>/Users/a&amp;b/.local/bin/logpipe-agent</string>") {
 		t.Fatalf("darwin: %s\n%s", path, body)
 	}

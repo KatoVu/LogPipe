@@ -9,6 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // cmdService installs `run` as a systemd unit (Linux) or launchd agent (macOS) that starts at boot
@@ -28,28 +31,43 @@ func cmdService(dir string, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
+	// systemd reads user units from $XDG_CONFIG_HOME/systemd/user, which UserConfigDir honours.
+	base, err := os.UserConfigDir()
+	if runtime.GOOS == "darwin" {
+		base, err = os.UserHomeDir()
+		base = filepath.Join(base, "Library")
+	}
 	if err != nil {
 		return err
 	}
 	root := os.Geteuid() == 0
-	path, body, err := serviceFile(runtime.GOOS, root, exe, dir, home)
+	path, body, err := serviceFile(runtime.GOOS, root, exe, dir, base)
 	if err != nil {
 		return err
 	}
 	ctl := serviceCtl(runtime.GOOS, root, path, dir)
 
 	if args[0] == "uninstall" {
-		ctl.stop() // not running or not loaded is fine
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			fmt.Fprintln(out, "not installed:", path, "doesn't exist")
+			return nil
+		}
+		if err := ctl.stop(); err != nil { // keep the file, or a still-running agent is orphaned
+			return fmt.Errorf("could not stop the service, left %s in place: %w", path, err)
+		}
+		if err := os.Remove(path); err != nil {
 			return err
 		}
 		ctl.reload()
 		fmt.Fprintln(out, "removed", path)
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(dir, "agent.yaml")); err != nil {
+	raw, err := os.ReadFile(filepath.Join(dir, "agent.yaml"))
+	if err != nil {
 		return fmt.Errorf("no agent.yaml in %s: run `logpipe-agent init` first", dir)
+	}
+	if err := serviceReady(raw); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -57,7 +75,7 @@ func cmdService(dir string, args []string, out io.Writer) error {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return err
 	}
-	ctl.stop() // reinstall: pick up the new file
+	_ = ctl.stop() // reinstall: pick up the new file; on a fresh install there's nothing to stop
 	ctl.reload()
 	if err := ctl.start(); err != nil {
 		return fmt.Errorf("wrote %s but could not start it: %w", path, err)
@@ -71,10 +89,11 @@ func cmdService(dir string, args []string, out io.Writer) error {
 }
 
 // serviceFile is where the service definition goes and what it says.
-func serviceFile(goos string, root bool, exe, dir, home string) (string, string, error) {
+// base is the user's config dir on Linux and ~/Library on macOS.
+func serviceFile(goos string, root bool, exe, dir, base string) (string, string, error) {
 	switch goos {
 	case "linux":
-		path, target := filepath.Join(home, ".config/systemd/user/logpipe-agent.service"), "default.target"
+		path, target := filepath.Join(base, "systemd/user/logpipe-agent.service"), "default.target"
 		if root {
 			path, target = "/etc/systemd/system/logpipe-agent.service", "multi-user.target"
 		}
@@ -90,9 +109,9 @@ RestartSec=5
 
 [Install]
 WantedBy=%s
-`, exe, dir, target), nil
+`, unitEscape(exe), unitEscape(dir), target), nil
 	case "darwin":
-		path := filepath.Join(home, "Library/LaunchAgents/io.logpipe.agent.plist")
+		path := filepath.Join(base, "LaunchAgents/io.logpipe.agent.plist")
 		if root {
 			path = "/Library/LaunchDaemons/io.logpipe.agent.plist"
 		}
@@ -114,10 +133,14 @@ WantedBy=%s
 	return "", "", fmt.Errorf("service is only supported on Linux (systemd) and macOS (launchd), not %s", goos)
 }
 
+// unitEscape keeps a path literal in ExecStart: systemd expands %x and $VAR even inside quotes.
+func unitEscape(s string) string { return strings.NewReplacer("%", "%%", "$", "$$").Replace(s) }
+
 type ctl struct {
-	stop, reload func()
-	start        func() error
-	logs         string
+	stop   func() error
+	reload func()
+	start  func() error
+	logs   string
 }
 
 func serviceCtl(goos string, root bool, path, dir string) ctl {
@@ -130,7 +153,7 @@ func serviceCtl(goos string, root bool, path, dir string) ctl {
 	}
 	if goos == "darwin" {
 		return ctl{
-			stop:   func() { sh("launchctl", "unload", "-w", path) },
+			stop:   func() error { return sh("launchctl", "unload", "-w", path) },
 			reload: func() {},
 			start:  func() error { return sh("launchctl", "load", "-w", path) },
 			logs:   "tail -f " + filepath.Join(dir, "agent.log"),
@@ -143,9 +166,28 @@ func serviceCtl(goos string, root bool, path, dir string) ctl {
 	}
 	systemctl := func(a ...string) error { return sh("systemctl", append(sc, a...)...) }
 	return ctl{
-		stop:   func() { systemctl("disable", "--now", "logpipe-agent") },
+		stop:   func() error { return systemctl("disable", "--now", "logpipe-agent") },
 		reload: func() { systemctl("daemon-reload") },
 		start:  func() error { return systemctl("enable", "--now", "logpipe-agent") },
 		logs:   logs,
 	}
+}
+
+// serviceReady refuses an agent.yaml whose key or endpoint comes from the environment: systemd and
+// launchd start the service without your shell's variables, so it would run with no key.
+func serviceReady(raw []byte) error {
+	var c struct {
+		APIKey   string `yaml:"api_key"`
+		Endpoint string `yaml:"endpoint"`
+	}
+	if err := yaml.Unmarshal(raw, &c); err != nil {
+		return err
+	}
+	for k, v := range map[string]string{"api_key": c.APIKey, "endpoint": c.Endpoint} {
+		if v == "" || strings.Contains(v, "${") {
+			return fmt.Errorf("agent.yaml %s is %q, but the service won't see your shell's environment: "+
+				"set it first with `logpipe-agent config set %s VALUE`", k, v, k)
+		}
+	}
+	return nil
 }

@@ -21,7 +21,7 @@ traces, and can drop or mask lines before they leave the host.
       -v /var/log:/var/log:ro \
       -v /var/run/docker.sock:/var/run/docker.sock:ro \
       -v logpipe-agent:/var/lib/logpipe-agent \
-      -v $PWD/conf.d:/etc/logpipe-agent/conf.d \
+      -v "$PWD/conf.d:/etc/logpipe-agent/conf.d" \
       ghcr.io/katovu/logpipe-agent:latest
     ```
 
@@ -33,7 +33,7 @@ traces, and can drop or mask lines before they leave the host.
     | `-v /var/log:/var/log:ro` | the log files it can tail (read-only) |
     | `-v /var/run/docker.sock:…:ro` | lets it read other containers' logs |
     | `-v logpipe-agent:/var/lib/logpipe-agent` | keeps file offsets and the send buffer across restarts |
-    | `-v $PWD/conf.d:/etc/logpipe-agent/conf.d` | keeps the sources you add with `track`; leave it out if you only add sources in the UI |
+    | `-v "$PWD/conf.d:/etc/logpipe-agent/conf.d"` | keeps the sources you add with `track`; leave it out if you only add sources in the UI |
 
     The image is built for amd64, arm64 and arm/v7. It has no `journalctl`, so for journald
     sources use the binary. To build it yourself: `docker build -t logpipe-agent agent/`. Next:
@@ -147,6 +147,10 @@ The container takes the same commands through `docker exec` ([see above](#use-th
 `logpipe-agent run` stays in the foreground. `service install` hands it to the OS instead, so it
 starts at boot and restarts after a crash. It uses the binary's own path and the config directory
 from `init`: a systemd user unit on Linux, a launchd agent on macOS, a system-wide one as root.
+
+The service starts without your shell's environment, so `agent.yaml` must hold the key and
+endpoint itself (`init --api-key lp_…` does that). If it still reads `${LOGPIPE_API_KEY}`,
+`service install` refuses; set it with `logpipe-agent config set api_key lp_…`.
 
 **Install the service:**
 

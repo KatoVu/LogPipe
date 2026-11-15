@@ -97,7 +97,7 @@ export function ConnectHelp({ token }: { token: string }) {
       {local && (
         <div className="callout warn"><div className="grow">
           You opened this page on <code>{window.location.hostname}</code>, so the commands point at <code>{origin}</code>. Other hosts and containers can't reach that:
-          use this server's IP or name instead (e.g. <code>http://192.168.1.10:8080</code>). For Docker on this same machine, add <code>--network host</code>.
+          use this server's IP or name instead (e.g. <code>http://192.168.1.10:8080</code>). For Docker on this same machine, add <code>--network host</code>: that works as is with Docker Engine on Linux; Docker Desktop (macOS, Windows) needs version 4.34+ with host networking turned on under Settings → Resources → Network.
         </div></div>
       )}
       <details>

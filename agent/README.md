@@ -16,7 +16,7 @@ docker run -d --name logpipe-agent --restart unless-stopped \
   -v /var/log:/var/log:ro \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v logpipe-agent:/var/lib/logpipe-agent \
-  -v $PWD/conf.d:/etc/logpipe-agent/conf.d \
+  -v "$PWD/conf.d:/etc/logpipe-agent/conf.d" \
   ghcr.io/katovu/logpipe-agent:latest
 ```
 
@@ -64,7 +64,8 @@ download `logpipe-agent_<os>_<arch>.tar.gz` and `checksums.txt` from the
 To keep it running in the background, `logpipe-agent service install` writes and starts a systemd
 user unit (Linux) or a launchd agent (macOS) pointing at this binary and config directory; as root it
 installs a system-wide one. On Linux as a normal user, also run `loginctl enable-linger $USER` so it
-keeps running after you log out. `service uninstall` removes it.
+keeps running after you log out. `service uninstall` removes it. The key and endpoint must be written in
+`agent.yaml` (not `${VAR}`), because the service doesn't get your shell's environment.
 
 No sudo needed. As a normal user the config lives in `~/.config/logpipe-agent` (offsets and the
 send buffer in its `run/`); as root it is `/etc/logpipe-agent`. `-c DIR` (or
