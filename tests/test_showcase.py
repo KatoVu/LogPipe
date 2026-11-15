@@ -162,3 +162,27 @@ def test_host_zone_from_localtime(tmp_path, monkeypatch):
     assert host_zone(str(tmp_path / "missing")) is None
     monkeypatch.setenv("TZ", "Europe/Paris")
     assert host_zone(str(tmp_path / "missing")) == "Europe/Paris"
+
+
+def test_rca_progress_reads_full_plans_and_survives_partial_ones():
+    from logpipe.showcase import _rca_progress
+
+    plans = iter(
+        [
+            None,
+            {"id": "p", "status": "running"},
+            {"id": "p", "status": "waiting_approval"},
+            {
+                "id": "p",
+                "status": "done",
+                "rounds": [{}, {}],
+                "llm_steps": [{"step": "synthesize", "status": "done", "seconds": 26.7}],
+            },
+        ]
+    )
+    current: list = [None]
+    live, steps = _rca_progress(lambda: current[0])
+    for want in ("starting", "round 0", "approval", "round 2"):
+        current[0] = next(plans)
+        assert want in live()
+    assert steps() == ["LLM synthesize: done in 27 s"] and steps() == []

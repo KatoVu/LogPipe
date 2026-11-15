@@ -25,6 +25,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+from ..ask.service import PlanStatus
 from ..settings import get_settings
 from .datadog import ShowcaseDatadog
 from .generator import FILES, ShopGenerator
@@ -124,10 +125,7 @@ class Tour:
         """Open ``where`` (a UI path, or a full link) in the browser, so you land on what to look at."""
         url = where if where.startswith("http") else f"{self.url}{where}"
         if not self.auto:
-            import webbrowser
-
-            with contextlib.suppress(webbrowser.Error):
-                webbrowser.open(url)
+            _open_quietly(url)
         self.say(f"→ look here: {url}", B, 2)
 
     def say(self, text: str, style: str = D, indent: int = 4) -> None:
@@ -165,16 +163,25 @@ class Tour:
     ) -> None:
         """Until ``done()``; Enter (or --auto) runs ``do`` instead of waiting for the UI.
         ``live`` is a counter (lines collected, your review); ``steps`` gives the background
-        job's new steps (LLM prompts, answers, epochs), each printed as it happens. When Enter did
-        it for you, ``show`` (a UI path, or a function giving one) opens where to look. With
+        job's new steps (LLM prompts, answers, epochs), each printed as it happens. When Enter does
+        it for you, ``show`` (a UI path, or a function giving one) opens first, so you watch it
+        happen there. With
         ``give_up``, a timeout prints it and the tour goes on instead of stopping. When ``do``
         is refused or its job fails, the reason is printed and Enter tries again."""
         hint = " (or press Enter and I'll do it)" if do else ""
         self.say(f"… waiting: {what}{hint}", Y, 2)
         _drop_typed_ahead()  # an Enter pressed earlier must not do this act for you
-        did, start = False, time.monotonic()
+        did, shown, start = False, False, time.monotonic()
+
+        def run_do() -> bool:
+            nonlocal shown
+            if show and not shown:  # open the page first: you watch it load, not a finished page
+                shown = True
+                self.show(_ask(show, "") if callable(show) else show)
+            return self._try(do)
+
         if self.auto and do:
-            did = self._try(do)
+            did = run_do()
         while True:
             for line in _ask(steps, []) if steps else []:
                 self.say(line)
@@ -194,12 +201,10 @@ class Tour:
                 self.live(_ask(live, "server busy, still waiting"))
             if not did and do and _enter_pressed(1.0):
                 self.say("(doing it for you)")
-                did = self._try(do)
+                did = run_do()
             elif did or not do:
                 time.sleep(1.0)
         self.say(f"✓ {what}", G, 2)
-        if did and show:
-            self.show(_ask(show, "") if callable(show) else show)
 
     def _try(self, do: Callable[[], None]) -> bool:
         """``do()``; False (with the server's reason printed) when the server refused it."""
@@ -223,6 +228,26 @@ class Tour:
         self.say(text, D, 2)
         while not _enter_pressed(3600):
             pass
+
+
+def _open_quietly(url: str) -> None:
+    """The browser, with its own chatter ("Opening in existing browser session", Chromium's zygote
+    errors) sent to /dev/null instead of the tour's output: it inherits our stdout and stderr."""
+    import webbrowser
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved, null = (os.dup(1), os.dup(2)), os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null, 1)
+        os.dup2(null, 2)
+        with contextlib.suppress(webbrowser.Error):
+            webbrowser.open(url)
+    finally:
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in (*saved, null):
+            os.close(fd)
 
 
 def _ask(fn: Callable, fallback):
@@ -552,7 +577,7 @@ def _tour(
         drafted,
         lambda: api("/api/review/generate", {"sample_cap": 2000}),
         steps=_job_steps(api, "draft"),
-        show="/setup?step=review",
+        show="/setup?step=sample",
     )
     t.pause()
 
@@ -813,7 +838,7 @@ def _tour(
         do_inv,
         live=inv_reviewed,
         steps=_job_steps(api, "apply", "retrain"),
-        show="/templates",
+        show="/maintenance",
     )
 
     t.act(
@@ -878,6 +903,7 @@ def _ask_act(t: Tour, api: Api) -> None:
 
     def ask() -> None:
         plan = api("/api/ask", {"question": ASK_QUESTION})
+        t.show(f"/query?tab=ask&plan={plan['id']}")
         t.say(
             f"read as: {plan['spec']['intent']}"
             + (f", groups {plan['spec']['groups']}" if plan["spec"].get("groups") else "")
@@ -900,7 +926,6 @@ def _ask_act(t: Tour, api: Api) -> None:
         ask,
         timeout=600,
         give_up="no answer yet: open Query → Ask and approve it, or ask again.",
-        show=lambda: f"/query?tab=ask&plan={a['id']}" if (a := answered()) else "/query?tab=ask",
     )
     if done := answered():
         result = api(f"/api/ask/{done['id']}")["result"] or {}
@@ -959,7 +984,8 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
         "logpipe posts the incident to Datadog as an event, then starts a root-cause analysis by "
         "itself (no approval needed: the Datadog integration runs it unattended) and posts its "
         "answer as a second event. Nothing to click; watch it in the UI under Anomaly alerts → "
-        "the incident → Investigation.",
+        "the incident → Investigation. Only if you started it yourself there (Investigate) does it "
+        "wait for your approval: approve it on that page, or press Enter and I'll approve it.",
     )
     t.say(DD_WAIT, Y)
     t.say(dd.links["events"])
@@ -969,40 +995,55 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
         timeout=180,
         give_up="no event yet; see the server output.",
     )
-    live, steps = _rca_progress(t.api, lambda p: bool(p.get("incident")))
+    # the newest incident; the Datadog sync started its analysis, unless you clicked Investigate
+    # first: that one waits for your approval like any Ask, so Enter approves it
+    iid = t.api("/api/incidents")["incidents"][0]["id"]
+
+    def plan() -> dict | None:
+        return t.api(f"/api/incidents/{iid}").get("ask_plan")
+
+    def approve() -> None:
+        if (p := plan()) and p["status"] == PlanStatus.WAITING:
+            t.api(f"/api/ask/{p['id']}/approve", {})
+
+    live, steps = _rca_progress(plan)
     t.wait(
         "its root cause posted to Datadog",
         lambda: dd.event(f"logpipe RCA: {HOST}"),
+        approve,
         timeout=600,
         live=live,
         steps=steps,
+        show=f"/alerts/{iid}",
         give_up="not posted yet; the analysis is still on the incident page, and posts when done.",
     )
     t.say(f"Each LLM step of that analysis, with prompts and tokens: {dd.links['llm']}")
 
 
 def _rca_progress(
-    api: Api, pick: Callable[[dict], bool]
+    plan: Callable[[], dict | None],
 ) -> tuple[Callable[[], str], Callable[[], list[str]]]:
-    """An analysis's progress (the newest plan ``pick`` matches): a live line, and each LLM step
-    once it finishes."""
+    """An analysis's progress from ``plan()`` (the full plan, or None before it exists): a live
+    line, and each LLM step once it finishes."""
     printed: set[str] = set()
-
-    def plan() -> dict | None:
-        return next((p for p in api("/api/ask")["plans"] if pick(p)), None)
 
     def live() -> str:
         p = plan()
         if p is None:
             return "starting the analysis"
-        running = next((s for s in p.get("llm_steps") or [] if s["status"] == "running"), None)
+        if p.get("status") == PlanStatus.WAITING:
+            return (
+                "waiting for your approval on the incident page (press Enter and I'll approve it)"
+            )
+        steps = p.get("llm_steps") or []
+        running = next((s for s in steps if s.get("status") == "running"), None)
         doing = f", waiting for the LLM: {running['step']}" if running else ""
-        return f"analysis {p['status']}, round {len(p['rounds'])}{doing}"
+        return f"analysis {p.get('status')}, round {len(p.get('rounds') or [])}{doing}"
 
     def steps() -> list[str]:
         p, out = plan(), []
         for i, s in enumerate((p or {}).get("llm_steps") or []):
-            if s["status"] != "running" and (key := f"{p['id']}:{i}") not in printed:
+            if s.get("status") != "running" and (key := f"{p['id']}:{i}") not in printed:
                 printed.add(key)
                 out.append(f"LLM {s['step']}: {s['status']} in {round(s.get('seconds') or 0)} s")
         return out
@@ -1046,7 +1087,8 @@ def _dd_webhook(t: Tour, dd: ShowcaseDatadog, token: str) -> None:
     title = "logpipe RCA: [Triggered]"
     plan_id = dd.webhook(t.url, token, "shop-api")
     t.say(f"sent; analysis {plan_id} started")
-    live, steps = _rca_progress(t.api, lambda p: p["id"] == plan_id)
+    t.say(f"watch it: {t.url}/query?tab=ask&plan={plan_id}")
+    live, steps = _rca_progress(lambda: t.api(f"/api/ask/{plan_id}"))
     t.wait(
         "the answer posted to Datadog",
         lambda: dd.event(title),
