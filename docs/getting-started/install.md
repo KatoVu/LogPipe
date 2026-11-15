@@ -40,7 +40,7 @@ providers, the web-chat scraper). It's installed into the same environment as
 | `CLICKHOUSE_*` | see file | store connection, plus a read-only user for Query/Ask |
 | `MONGO_*` | see file | store connection, plus a read-only URI for free-form queries |
 | `KAFKA_*` | see file | broker, topic, consumer group, partition key |
-| `LOGPIPE_ADMIN_PASSWORD` | unset | UI password; unset = generated and printed on first start |
+| `LOGPIPE_ADMIN_PASSWORD` | unset | UI password; unset = `changeme`, replaced at the first login |
 
 ## Services
 
