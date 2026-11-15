@@ -6,7 +6,10 @@ import { api, ApiError } from "./api";
 import { Card } from "./ui";
 import { LogoMark } from "./logo";
 
-type AuthStatus = { required: boolean; authenticated: boolean };
+type AuthStatus = { required: boolean; authenticated: boolean; must_change?: boolean };
+
+// A new server's password; the server lets a session with it do nothing but replace it.
+const DEFAULT_PASSWORD = "changeme";
 
 /** Where to go after logging in: only a path on this site (no "//evil.example" open redirect). */
 export function safeNext(raw: string | null) {
@@ -30,6 +33,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
   if (!status) return null;
   const atLogin = location.pathname === "/login";
   const next = safeNext(new URLSearchParams(location.search).get("next"));
+  if (status.authenticated && status.must_change) return <SetPassword onDone={check} />;
   if (status.authenticated) return atLogin ? <Navigate to={next} replace /> : <>{children}</>;
   if (!atLogin) {
     const here = location.pathname + location.search + location.hash;
@@ -74,7 +78,53 @@ function Login({ onDone, next }: { onDone: () => void; next: string }) {
         </label>
         {error && <p className="error-text" role="alert">{error}</p>}
         <button className="btn primary" disabled={busy || !password}>{busy ? "Checking…" : "Log in"}</button>
-        <p className="muted small" style={{ margin: 0 }}>Forgot it? Set <code>LOGPIPE_ADMIN_PASSWORD</code> on the server and restart.</p>
+        <p className="muted small" style={{ margin: 0 }}>A new server's password is <code>{DEFAULT_PASSWORD}</code>. Forgot yours? Set <code>LOGPIPE_ADMIN_PASSWORD</code> on the server and restart.</p>
+      </form>
+    </main>
+  );
+}
+
+/** Logged in with the default password: replace it before anything else opens. */
+function SetPassword({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [again, setAgain] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { document.title = "Set a password · logpipe"; }, []);
+  const mismatch = again !== "" && again !== password;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/api/auth/password", { method: "POST", json: { current: DEFAULT_PASSWORD, new: password } });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't set the password");
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="login">
+      <form className="card login-card stack" onSubmit={submit}>
+        <div className="brand login-brand"><span className="brand-mark"><LogoMark /></span>logpipe</div>
+        <div>
+          <h1>Set a new password</h1>
+          <p className="muted small" style={{ marginTop: 4 }}>You logged in with the default password. Pick your own (at least 8 characters) to open the console.</p>
+        </div>
+        <label className="field">
+          New password
+          <input type="password" autoComplete="new-password" autoFocus required minLength={8} value={password}
+            onChange={(e) => setPassword(e.target.value)} />
+        </label>
+        <label className="field">
+          Again
+          <input type="password" autoComplete="new-password" required value={again} aria-invalid={mismatch}
+            onChange={(e) => setAgain(e.target.value)} />
+        </label>
+        {mismatch && <p className="error-text" role="alert">They don't match.</p>}
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <button className="btn primary" disabled={busy || password.length < 8 || password !== again}>{busy ? "Saving…" : "Set password"}</button>
       </form>
     </main>
   );
