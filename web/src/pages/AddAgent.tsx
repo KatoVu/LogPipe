@@ -19,6 +19,7 @@ export function installCommands(token: string) {
       "  ghcr.io/katovu/logpipe-agent:latest",
     ].join("\n"),
     binary: [
+      "curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh",
       `logpipe-agent init --endpoint ${endpoint} --api-key ${token}`,
       "logpipe-agent track '/var/log/myapp/*.log' --service myapp --auto-multiline",
       "logpipe-agent check && logpipe-agent run",
@@ -74,7 +75,7 @@ export function InstallStep({ token }: { token: string }) {
         <button type="button" className={how === "binary" ? "on" : ""} aria-pressed={how === "binary"} onClick={() => setHow("binary")}>Binary</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>Run this on the host whose logs you want.
-        {how === "docker" ? " It reads /var/log and container output." : " No sudo needed; your user must be able to read the files (e.g. be in the adm group)."}</p>
+        {how === "docker" ? " It reads /var/log and container output." : " Installs the binary for Linux or macOS to ~/.local/bin; no sudo needed. Your user must be able to read the files (e.g. be in the adm group)."}</p>
       <CopyBlock text={cmds[how]} />
     </div>
   );
