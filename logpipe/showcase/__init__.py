@@ -79,7 +79,8 @@ def fresh_volumes(services: list[str], run: Callable = subprocess.run) -> list[s
     need_docker()
     config = json.loads(
         run(
-            ["docker", "compose", "config", "--format", "json"],
+            # every profile: without it, volumes of profiled services (mongo) are left out
+            ["docker", "compose", "--profile", "*", "config", "--format", "json"],
             capture_output=True,
             text=True,
             check=True,

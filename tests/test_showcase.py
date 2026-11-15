@@ -137,7 +137,9 @@ def test_fresh_volumes_removes_only_the_started_services_data(monkeypatch):
 
     def run(cmd, **_kw):
         calls.append(cmd)
-        config = {"volumes": {v: {"name": f"proj_{v}"} for v in showcase.VOLUMES.values()}}
+        # like compose: mongo's volume is listed only when its profile is on
+        names = [v for s, v in showcase.VOLUMES.items() if s != "mongo" or "*" in cmd]
+        config = {"volumes": {v: {"name": f"proj_{v}"} for v in names}}
         return type("Done", (), {"stdout": json.dumps(config)})()
 
     assert showcase.fresh_volumes(["kafka", "mongo"], run=run) == [
