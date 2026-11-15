@@ -18,7 +18,7 @@ def test_saved_answers_become_the_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("LOGPIPE_ADMIN_PASSWORD", "long enough")
     ran, launched = [], []
     # server, kafka, memory store, offline, port, data dir, start
-    _answers(monkeypatch, "server", "kafka", "", "", "", "", "y")
+    _answers(monkeypatch, "server", "kafka", "memory", "offline", "", "", "y")
     wizard.start(run=lambda cmd, check: ran.append(cmd), launch=launched.append)
     assert ran == [["docker", "compose", "up", "-d", "--wait", "kafka"]]
     assert launched == [
@@ -92,9 +92,9 @@ def test_gemini_needs_no_sign_in(tmp_path, monkeypatch):
     monkeypatch.setenv("LOGPIPE_ADMIN_PASSWORD", "long enough")
     monkeypatch.setenv("WEB_BROWSER", "camoufox")  # restored after the test
     ran, launched = [], []
-    # server, memory, memory, web, gemini, chromium (offered first), port, data dir,
-    # start, sign in? (Enter = no)
-    _answers(monkeypatch, "server", "", "", "web", "gemini", "", "", "", "y", "")
+    # server, memory, memory, then Enter for web / gemini / chromium (the defaults), port,
+    # data dir, start, sign in? (Enter = no)
+    _answers(monkeypatch, "server", "memory", "memory", "", "", "", "", "", "y", "")
     wizard.start(run=lambda cmd, check: ran.append(cmd), launch=launched.append)
     assert not ran  # no login window, no camoufox download
     cmd = launched[0]
@@ -107,7 +107,7 @@ def test_server_plan(monkeypatch, tmp_path):
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
     launched = []
     # server, memory, clickhouse, offline, port, data dir, start
-    _answers(monkeypatch, "server", "", "clickhouse", "", "9090", "", "n")
+    _answers(monkeypatch, "server", "memory", "clickhouse", "offline", "9090", "", "n")
     wizard.start(launch=launched.append)
     saved = json.loads(wizard.SAVED.read_text())
     assert wizard.plan(saved) == (
@@ -155,7 +155,7 @@ def test_server_start_asks_the_admin_password_without_saving_it(monkeypatch, tmp
     monkeypatch.delenv("LOGPIPE_ADMIN_PASSWORD", raising=False)
     typed = iter(["short", "long enough", "long enough"])
     monkeypatch.setattr("getpass.getpass", lambda _prompt="": next(typed))
-    _answers(monkeypatch, "server", "", "", "", "", "", "y")
+    _answers(monkeypatch, "server", "memory", "memory", "offline", "", "", "y")
     wizard.start(launch=lambda cmd: None)
     assert wizard.os.environ.pop("LOGPIPE_ADMIN_PASSWORD") == "long enough"
     assert "long enough" not in wizard.SAVED.read_text()
@@ -180,7 +180,18 @@ def test_answers_from_other_modes_are_kept(tmp_path, monkeypatch):
     wizard.SAVED.write_text(json.dumps({"mode": "demo", "port": 8123, "site": "gemini"}))
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
     # server, memory, memory, offline, port, data dir, start? no
-    _answers(monkeypatch, "server", "", "", "offline", "", "", "n")
+    _answers(monkeypatch, "server", "memory", "memory", "offline", "", "", "n")
     wizard.start(launch=lambda cmd: None)
     saved = json.loads(wizard.SAVED.read_text())
     assert saved["mode"] == "server" and saved["port"] == 8123 and saved["site"] == "gemini"
+
+
+def test_first_run_defaults_are_kafka_mongodb_and_gemini_in_chromium(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(wizard, "_free_port", lambda _: None)
+    _answers(monkeypatch, "server", *[""] * 7, "n")  # Enter for everything, then don't start
+    wizard.start(launch=lambda cmd: None)
+    saved = json.loads(wizard.SAVED.read_text())
+    assert (saved["queue"], saved["store"], saved["llm_kind"]) == ("kafka", "mongodb", "web")
+    assert (saved["site"], saved["browser"]) == ("gemini", "chromium")
+    assert wizard.plan(saved)[0] == ["kafka", "mongo"]

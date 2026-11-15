@@ -106,11 +106,6 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
       # Accepted as an agent API key, so the compose agent can ship before you create keys in the UI.
       LOGPIPE_BOOTSTRAP_KEY: ${LOGPIPE_BOOTSTRAP_KEY:-lp_compose_demo_key}
       # UI login. Unset: generated on first start and printed (`docker compose logs server`).
@@ -135,11 +130,6 @@ services:
       MONGO_READONLY_URI: mongodb://${MONGO_RO_USER:-logpipe_ro}:${MONGO_RO_PASSWORD:-}@mongo:27017/?authSource=${MONGO_DB:-logpipe}
       MONGO_DB: ${MONGO_DB:-logpipe}
       LLM_BACKEND: ${LLM_BACKEND:-offline}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}

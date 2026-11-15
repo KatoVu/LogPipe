@@ -68,6 +68,32 @@ def need_docker() -> None:
         raise SystemExit("the showcase's agent runs in Docker: install Docker first")
 
 
+# The data volume of each service the showcase can start, as named in docker-compose.yaml.
+VOLUMES = {"clickhouse": "clickhouse_data", "mongo": "mongo_data", "kafka": "kafka_data"}
+
+
+def fresh_volumes(services: list[str], run: Callable = subprocess.run) -> list[str]:
+    """Stop ``services`` and delete their data volumes, so the showcase starts from nothing.
+
+    Only the showcase does this; ``logpipe start`` keeps whatever the volumes hold."""
+    need_docker()
+    config = json.loads(
+        run(
+            ["docker", "compose", "config", "--format", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    volumes = [config["volumes"][VOLUMES[s]]["name"] for s in services]
+    print(f"{D}fresh start: removing the Docker volumes {', '.join(volumes)}{R}", flush=True)
+    run(
+        ["docker", "compose", "rm", "--stop", "--force", *services], check=True, capture_output=True
+    )
+    run(["docker", "volume", "rm", "--force", *volumes], check=True, capture_output=True)
+    return volumes
+
+
 def _fit(text: str, indent: int) -> str:
     """One terminal line: a long status that wrapped would break redrawing it in place."""
     width = shutil.get_terminal_size((100, 24)).columns - indent - 1
@@ -263,6 +289,7 @@ def run(
     if dd:
         cmd.append("--datadog")
     if services:
+        fresh_volumes(services)
         docker_up(services)
     settings = get_settings()
     password = settings.server.admin_password or secrets.token_urlsafe(9)
@@ -272,13 +299,6 @@ def run(
         env["WEB_BROWSER"] = a["browser"]  # was the --browser flag
     if dd:
         env |= dd.env(f"http://localhost:{port}")
-    if a["store"] == "clickhouse":  # a fresh database every run
-        import clickhouse_connect
-
-        ch = settings.clickhouse
-        clickhouse_connect.get_client(
-            host=ch.host, port=ch.port, username=ch.user, password=ch.password
-        ).command("DROP DATABASE IF EXISTS logpipe_showcase")
     shutil.rmtree(ROOT, ignore_errors=True)
     (ROOT / "logs").mkdir(parents=True)
     need_docker()

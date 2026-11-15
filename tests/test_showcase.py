@@ -94,8 +94,8 @@ def test_showcase_saves_its_answers_as_the_next_defaults(tmp_path, monkeypatch):
         raise SystemExit("stop")  # everything after the questions is out of scope here
 
     monkeypatch.setattr(start, "plan", stop)
-    # queue, store (Enter = saved clickhouse), llm, port (Enter = saved 9191), data dir, demo?
-    it = iter(["kafka", "", "", "", "", ""])
+    # queue, store (Enter = saved clickhouse), llm, port (Enter = saved 9191), data dir
+    it = iter(["kafka", "", "offline", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(it))
     with pytest.raises(SystemExit):
         showcase.run()
@@ -129,3 +129,20 @@ def test_a_failed_do_can_be_retried_with_enter(monkeypatch):
 
     tour.wait("templates drafted", lambda: len(tries) >= 3, do, steps=steps, timeout=60)
     assert len(tries) == 3
+
+
+def test_fresh_volumes_removes_only_the_started_services_data(monkeypatch):
+    monkeypatch.setattr(showcase.shutil, "which", lambda _: "/usr/bin/docker")
+    calls = []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        config = {"volumes": {v: {"name": f"proj_{v}"} for v in showcase.VOLUMES.values()}}
+        return type("Done", (), {"stdout": json.dumps(config)})()
+
+    assert showcase.fresh_volumes(["kafka", "mongo"], run=run) == [
+        "proj_kafka_data",
+        "proj_mongo_data",
+    ]
+    assert calls[1] == ["docker", "compose", "rm", "--stop", "--force", "kafka", "mongo"]
+    assert calls[2] == ["docker", "volume", "rm", "--force", "proj_kafka_data", "proj_mongo_data"]

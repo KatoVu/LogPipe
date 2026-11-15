@@ -8,6 +8,7 @@
 | Docker + Compose | recent | ClickHouse, MongoDB, Kafka, the platform profile, the showcase's agent |
 | Go | 1.23+ | building `logpipe-agent` from `agent/` |
 | Node | 22+ | developing the web UI in `web/` (the Docker image builds it for you) |
+| Chromium | — | the default LLM in `logpipe start`: Gemini in a browser ([web chat](web-chat.md)); not needed with offline rules or an API key |
 | A GPU | — | only for `LLM_BACKEND=hf` (the fine-tuned mask model) |
 
 CPU is enough for everything else, including LogBERT training at the eval sizes.

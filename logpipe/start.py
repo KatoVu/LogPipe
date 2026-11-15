@@ -143,7 +143,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             ("memory", "in-process, nothing to install (straightforward)"),
             ("kafka", "Kafka broker in Docker, started for you"),
         ],
-        saved.get("queue"),
+        saved.get("queue", "kafka"),
     )
     a["store"] = choose(
         "Where do parsed rows go?",
@@ -156,7 +156,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             ("clickhouse", "ClickHouse in Docker, started for you"),
             ("mongodb", "MongoDB in Docker, started for you (everything except raw SQL)"),
         ],
-        saved.get("store"),
+        saved.get("store", "mongodb"),
     )
     a["llm_kind"] = choose(
         "Who names slot keys and confirms template re-associations?",
@@ -165,7 +165,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             ("web", "a chat site driven in a browser (web scrape), no API key"),
             ("api", "a hosted API, needs its API key in the environment or .env"),
         ],
-        saved.get("llm_kind"),
+        saved.get("llm_kind", "web"),
     )
     if a["llm_kind"] == "web":
         a["site"] = choose(
@@ -174,15 +174,15 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
                 (name, "works signed out" if site.anonymous else "needs a one-time sign-in")
                 for name, site in sorted(SITES.items())
             ],
-            saved.get("site"),
+            saved.get("site", "gemini"),
         )
         browsers = [
-            ("camoufox", "bundled Firefox build (one-time download)"),
             ("chromium", "the chromium on your PATH"),
+            ("camoufox", "bundled Firefox build (one-time download)"),
         ]
-        if shutil.which("chromium"):  # nothing to download, so offer it first
-            browsers.reverse()
-        a["browser"] = choose("Which browser drives it?", browsers, saved.get("browser"))
+        a["browser"] = choose(
+            "Which browser drives it?", browsers, saved.get("browser", "chromium")
+        )
     elif a["llm_kind"] == "api":
         a["provider"] = choose(
             "Which provider?",

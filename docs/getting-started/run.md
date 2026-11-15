@@ -6,11 +6,12 @@
 uv run logpipe start      # or `make start`
 ```
 
-It asks what to run (your own logs, or the server for agents), which queue
-(in-memory, or Kafka, which it starts in Docker for you), who names keys and confirms
-re-associations (offline rules or a [hosted API](llm.md)), and the few settings
-that matter. Then it prints the equivalent commands and runs them. Answers are saved in
-`.logpipe/start.json` and become next time's defaults.
+It asks what to run (your own logs, or the server for agents), which queue, which store, who
+names keys and confirms re-associations, and the few settings that matter. Then it prints the
+equivalent commands and runs them. Pressing Enter on a first run takes the defaults: **Kafka**
+and **MongoDB** (both started in Docker for you) and **Gemini**, signed out, driven in Chromium
+(`chromium` must be on your `PATH`). Offline rules and a [hosted API](llm.md) are the other LLM
+choices. Answers are saved in `.logpipe/start.json` and become next time's defaults.
 
 ## 2. Showcase: the product, guided
 
@@ -26,6 +27,10 @@ them and write a parsing rule,
 calibrate and train, explore, a payment-gateway outage that LogBERT flags, and a new service
 whose templates are drafted for review automatically. Each act waits for you to do it in the
 UI; Enter lets it do the act instead. Files go to `artifacts/showcase/`.
+
+Each run starts fresh: before starting Kafka, MongoDB or ClickHouse, the showcase stops them and
+deletes their Docker volumes. Anything a `logpipe start` server stored in those services is gone
+afterwards. `--no-ask` uses the memory store and queue, so it touches no volumes.
 
 ## 3. The platform: agents + server + UI
 
