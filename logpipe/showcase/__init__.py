@@ -505,6 +505,8 @@ def _tour(
         return api("/api/setup")["review"]
 
     def drafted() -> bool:  # and no newer draft still running
+        if api("/api/settings")["calibrated"]:  # a server set up earlier: nothing to draft
+            return True
         return batch() is not None and not any(
             j["kind"] == "draft" and j["status"] in ("queued", "running")
             for j in api("/api/jobs")["jobs"]
