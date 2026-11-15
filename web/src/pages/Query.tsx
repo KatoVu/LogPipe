@@ -1,12 +1,11 @@
 // Query: build a question with dropdowns (time range, filters, a measure, group-by), ask it in
 // plain English, or write SQL. A schema sidebar and saved queries sit on the left.
 import { useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type QueryResult } from "../api";
-import { RANGES, TimeRange } from "../charts";
+import { AutoChart, RANGES, TimeRange } from "../charts";
 import { AskPanel } from "../ask";
-import { Card, Empty, PageHead, Switch, fmt } from "../ui";
+import { Card, Empty, PageHead, Switch } from "../ui";
 
 interface Schema {
   engine: string; table: string; payload_access: string; measures: string[]; ops: string[];
@@ -18,8 +17,6 @@ interface Spec { minutes: number; filters: Filter[]; measure: { fn: string; fiel
 
 const BASE = ["host", "service", "source", "level", "status", "template_id", "message"];
 const MEASURE_LABEL: Record<string, string> = { count: "Count of lines", count_distinct: "Distinct values of", avg: "Average of", min: "Minimum of", max: "Maximum of", sum: "Sum of", p95: "95th percentile of" };
-// Categorical order, fixed: a series keeps its colour; past six, groups fold into the table only.
-const PALETTE = ["#3b6fd4", "#e07b1a", "#2a9d8f", "#9b5de5", "#c2a40e", "#8a8f98"];
 const EMPTY: Spec = { minutes: 60, filters: [], measure: { fn: "count" }, group_by: [], over_time: false, limit: 100 };
 
 function FieldSelect({ value, onChange, fields, label, allowNone }: { value: string; onChange: (v: string) => void; fields: string[]; label: string; allowNone?: boolean }) {
@@ -82,48 +79,7 @@ function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpe
 
 function ResultView({ r }: { r: QueryResult }) {
   const cols = r.columns;
-  const numericLast = r.rows.length > 0 && r.rows.every((row) => typeof row[row.length - 1] === "number" || row[row.length - 1] === null);
-  const timeCol = cols[0] === "time" && numericLast;
-  const value = cols[cols.length - 1];
-  let chart = null;
-  if (timeCol) {
-    const groupIdx = cols.length > 2 ? 1 : -1;
-    const totals = new Map<string, number>();
-    r.rows.forEach((row) => { const g = groupIdx < 0 ? value : String(row[groupIdx]); totals.set(g, (totals.get(g) ?? 0) + Number(row[row.length - 1] ?? 0)); });
-    const series = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, PALETTE.length).map(([g]) => g);
-    const byTime = new Map<string, Record<string, number | string>>();
-    r.rows.forEach((row) => {
-      const t = String(row[0]); const g = groupIdx < 0 ? value : String(row[groupIdx]);
-      if (!series.includes(g)) return;
-      byTime.set(t, { ...(byTime.get(t) ?? { time: t }), [g]: Number(row[row.length - 1] ?? 0) });
-    });
-    const data = [...byTime.values()];
-    chart = (
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--grid)" />
-          <XAxis dataKey="time" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(t: string) => new Date(t.replace(" ", "T") + (t.includes("Z") || t.includes("+") ? "" : "Z")).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
-          <YAxis width={44} tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
-          <Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
-          {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
-          {series.map((g, i) => <Line key={g} dataKey={g} stroke={PALETTE[i]} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />)}
-        </LineChart>
-      </ResponsiveContainer>
-    );
-  } else if (numericLast && cols.length === 2 && r.rows.length > 1) {
-    const data = r.rows.slice(0, 20).map((row) => ({ k: String(row[0]), v: Number(row[1] ?? 0) }));
-    chart = (
-      <ResponsiveContainer width="100%" height={Math.max(120, data.length * 26)}>
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
-          <CartesianGrid horizontal={false} stroke="var(--grid)" />
-          <XAxis type="number" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="k" width={160} tick={{ fill: "var(--ink-2)", fontSize: 12 }} axisLine={false} tickLine={false} />
-          <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
-          <Bar dataKey="v" name={value} fill={PALETTE[0]} radius={[0, 4, 4, 0]} isAnimationActive={false} />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  }
+  const chart = <AutoChart columns={cols} rows={r.rows} />;
   return (
     <Card title={`${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={`${r.engine} · ${r.table}`}>
       {r.rows.length === 0 ? <Empty title="No rows">Widen the time range or remove a filter.</Empty> : (
@@ -172,8 +128,8 @@ export default function Query() {
   return (
     <>
       <PageHead title="Query" sub="Pick what you want to see, ask a question (even why something broke), or write SQL. Everything is read-only." />
-      <div className="query-layout">
-        <aside className="query-side">
+      <div className={tab === "ask" ? "" : "query-layout"}>
+        {tab !== "ask" && <aside className="query-side">
           <Card title="Saved">
             {saved.length === 0 ? <div className="muted small">Run a query, then save it to find it here.</div> : (
               <ul className="side-list">
@@ -203,7 +159,7 @@ export default function Query() {
               </>
             )}
           </Card>
-        </aside>
+        </aside>}
 
         <div className="stack">
           <Card>

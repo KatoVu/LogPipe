@@ -1,7 +1,7 @@
 // Explorer and dashboard widgets: time range, timeline (stacked bars over the whole range),
 // toplist and log level badges.
 import type { ReactNode } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useSearchParams } from "react-router-dom";
 import type { Histogram, Level } from "./api";
 import { fmt } from "./ui";
@@ -133,4 +133,55 @@ export function Toplist({ rows, onPick, unit = "lines", color }: { rows: [ReactN
       })}
     </ol>
   );
+}
+
+// Categorical order, fixed: a series keeps its colour; past six, groups fold into the table only.
+const PALETTE = ["#3b6fd4", "#e07b1a", "#2a9d8f", "#9b5de5", "#c2a40e", "#8a8f98"];
+
+/** A query result drawn the obvious way: lines over time when the first column is time, bars for
+ *  one label and one number, nothing otherwise (the table says it). */
+export function AutoChart({ columns: cols, rows }: { columns: string[]; rows: unknown[][] }) {
+  const numericLast = rows.length > 0 && rows.every((row) => typeof row[row.length - 1] === "number" || row[row.length - 1] === null);
+  const timeCol = cols[0] === "time" && numericLast;
+  const value = cols[cols.length - 1];
+  let chart = null;
+  if (timeCol) {
+    const groupIdx = cols.length > 2 ? 1 : -1;
+    const totals = new Map<string, number>();
+    rows.forEach((row) => { const g = groupIdx < 0 ? value : String(row[groupIdx]); totals.set(g, (totals.get(g) ?? 0) + Number(row[row.length - 1] ?? 0)); });
+    const series = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, PALETTE.length).map(([g]) => g);
+    const byTime = new Map<string, Record<string, number | string>>();
+    rows.forEach((row) => {
+      const t = String(row[0]); const g = groupIdx < 0 ? value : String(row[groupIdx]);
+      if (!series.includes(g)) return;
+      byTime.set(t, { ...(byTime.get(t) ?? { time: t }), [g]: Number(row[row.length - 1] ?? 0) });
+    });
+    const data = [...byTime.values()];
+    chart = (
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid vertical={false} stroke="var(--grid)" />
+          <XAxis dataKey="time" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(t: string) => new Date(t.replace(" ", "T") + (t.includes("Z") || t.includes("+") ? "" : "Z")).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+          <YAxis width={44} tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
+          <Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
+          {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+          {series.map((g, i) => <Line key={g} dataKey={g} stroke={PALETTE[i]} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />)}
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  } else if (numericLast && cols.length === 2 && rows.length > 1) {
+    const data = rows.slice(0, 20).map((row) => ({ k: String(row[0]), v: Number(row[1] ?? 0) }));
+    chart = (
+      <ResponsiveContainer width="100%" height={Math.max(120, data.length * 26)}>
+        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+          <CartesianGrid horizontal={false} stroke="var(--grid)" />
+          <XAxis type="number" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="k" width={160} tick={{ fill: "var(--ink-2)", fontSize: 12 }} axisLine={false} tickLine={false} />
+          <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
+          <Bar dataKey="v" name={value} fill={PALETTE[0]} radius={[0, 4, 4, 0]} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+  return chart;
 }
