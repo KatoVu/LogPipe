@@ -724,6 +724,17 @@ def test_query_builder_schema_saved_and_ask(env):
         },
     ).json()
     assert avg["result"]["rows"] == [[20.0]]  # 0,10,20,30,40 ms evenly
+    found = client.post(
+        "/api/query/build",
+        json={
+            "minutes": 60,
+            "measure": {"fn": "lines"},
+            "group_by": ["service"],  # ignored for lines
+            "filters": [{"field": "message", "op": "contains", "value": "disk"}],
+        },
+    ).json()["result"]
+    assert found["columns"] == ["timestamp", "host", "service", "level", "message", "payload"]
+    assert [r[2:5] for r in found["rows"]] == [["db", "error", "ERROR disk full"]]
     over = client.post("/api/query/build", json={"minutes": 60, "over_time": True}).json()
     assert (
         sum(r[-1] for r in over["result"]["rows"]) == 64 and over["result"]["columns"][0] == "time"

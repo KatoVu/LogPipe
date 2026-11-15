@@ -216,6 +216,27 @@ class MongoCompiler(Compiler):
     def build(self, spec: dict) -> str:
         match = self.time_match(spec) + self.filter_match(spec.get("filters"))
         fn, target, label = measure_of(spec)
+        limit = max(1, min(int(spec.get("limit") or 100), get_settings().server.max_builder_rows))
+        if fn == "lines":  # group_by and over_time don't apply to lines
+            return _dump(
+                [
+                    {"$match": {"$and": match}},
+                    {"$sort": {"timestamp": -1}},
+                    {"$limit": limit},
+                    {
+                        "$project": {
+                            # all computed: keeps column order
+                            "_id": 0,
+                            "timestamp": "$timestamp",
+                            "host": "$device_id",
+                            "service": "$service",
+                            "level": LEVEL_EXPR,
+                            "message": "$raw_message",
+                            "payload": "$payload",
+                        }
+                    },
+                ]
+            )
         after: dict = {}  # a $set after the $group, turning the accumulator's output into the value
         if fn == "count":
             acc: dict = {"$sum": 1}
@@ -255,11 +276,7 @@ class MongoCompiler(Compiler):
         pipeline += [
             {"$project": project},
             {"$sort": {"time": 1} if spec.get("over_time") else {label: -1}},
-            {
-                "$limit": max(
-                    1, min(int(spec.get("limit") or 100), get_settings().server.max_builder_rows)
-                )
-            },
+            {"$limit": limit},
         ]
         return _dump(pipeline)
 

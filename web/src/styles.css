@@ -867,3 +867,18 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .val-list .grow { flex: 1; }
 @media (max-width: 640px) { .sentence { font-size: 14px; } .pill { max-width: 240px; } }
 .builder { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---- query builder: search, lines, drill-in ---- */
+.builder-search { width: 100%; max-width: 560px; height: 34px; font-size: 14px; }
+.line-list { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow: auto; display: flex; flex-direction: column; }
+.line-item { display: flex; flex-direction: column; gap: 4px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.line-item:last-child { border-bottom: none; }
+.line-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.line-meta .lvl button { all: unset; cursor: pointer; }
+.line-msg { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); line-height: 1.45; }
+.line-fields { gap: 4px; }
+.chip-btn:hover { border-color: var(--accent); color: var(--ink); }
+.drill-actions { white-space: nowrap; text-align: right; width: 1%; }
+.drill-actions .btn { opacity: 0; transition: opacity .12s; }
+.drill-row:hover .drill-actions .btn, .drill-actions .btn:focus-visible { opacity: 1; }
+@media (hover: none) { .drill-actions .btn { opacity: 1; } }

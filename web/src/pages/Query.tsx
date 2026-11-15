@@ -17,7 +17,7 @@ interface Filter { field: string; op: string; value: string }
 interface Spec { minutes: number; filters: Filter[]; measure: { fn: string; field?: string }; group_by: string[]; over_time: boolean; limit: number }
 
 const BASE = ["host", "service", "source", "level", "status", "template_id", "message"];
-const MEASURE_LABEL: Record<string, string> = { count: "Count of lines", count_distinct: "Distinct values of", avg: "Average of", min: "Minimum of", max: "Maximum of", sum: "Sum of", p95: "95th percentile of" };
+const MEASURE_LABEL: Record<string, string> = { lines: "The matching lines", count: "Count of lines", count_distinct: "Distinct values of", avg: "Average of", min: "Minimum of", max: "Maximum of", sum: "Sum of", p95: "95th percentile of" };
 type Tab = "ask" | "builder" | "sql";
 const TABS: [Tab, string][] = [["ask", "Ask"], ["builder", "Builder"], ["sql", "SQL"]];
 const EMPTY: Spec = { minutes: 60, filters: [], measure: { fn: "count" }, group_by: [], over_time: false, limit: 100 };
@@ -28,6 +28,7 @@ const OP_LABEL: Record<string, string> = { "=": "is", "!=": "is not", contains: 
 const RANGE_WORDS: Record<string, string> = { "15m": "last 15 minutes", "1h": "last hour", "4h": "last 4 hours", "1d": "last day", "7d": "last 7 days" };
 const QUICK = ["level", "service", "host"];
 const PRESETS: [string, Partial<Spec>][] = [
+  ["Latest errors", { measure: { fn: "lines" }, filters: [{ field: "level", op: "=", value: "error" }], limit: 50 }],
   ["Errors by service", { filters: [{ field: "level", op: "=", value: "error" }], group_by: ["service"] }],
   ["Volume over time", { over_time: true }],
   ["Errors over time", { filters: [{ field: "level", op: "=", value: "error" }], group_by: ["service"], over_time: true }],
@@ -62,6 +63,10 @@ function FilterEdit({ init, fields, ops, minutes, onDone }: { init?: Filter; fie
     <div className="stack" style={{ gap: 8 }}>
       <div className="pop-title">Filter on</div>
       <div className="row" style={{ gap: 6 }}>{QUICK.map((q) => <button key={q} type="button" className="btn small" onClick={() => setF({ ...f, field: q })}>{label(q)}</button>)}</div>
+      {fields.length > 0 && <>
+        <div className="pop-title">Extracted from your lines</div>
+        <div className="row" style={{ gap: 6 }}>{fields.slice(0, 8).map((x) => <button key={x} type="button" className="btn small mono" onClick={() => setF({ ...f, field: `@${x}` })}>@{x}</button>)}</div>
+      </>}
       <FieldSelect allowNone value="" onChange={(v) => setF({ ...f, field: v })} fields={fields} label="Other field" />
     </div>
   );
@@ -94,14 +99,31 @@ function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpe
   const ops = schema?.ops ?? ["="];
   const range = RANGES.find(([, m]) => m === spec.minutes)?.[0] ?? "1h";
   const measures = (schema?.measures ?? ["count"]).filter((m) => m !== "p95" || schema?.engine === "clickhouse");
-  const what = spec.measure.fn === "count" ? "the number of lines" : `${MEASURE_LABEL[spec.measure.fn].toLowerCase()} ${spec.measure.field ?? ""}`;
+  const lines = spec.measure.fn === "lines";
+  const plain = lines || spec.measure.fn === "count";  // measures without a field
+  const what = lines ? "the matching lines" : spec.measure.fn === "count" ? "the number of lines" : `${MEASURE_LABEL[spec.measure.fn].toLowerCase()} ${spec.measure.field ?? ""}`;
+  // the search box is the first "message contains" filter; the other filters are pills
+  const si = spec.filters.findIndex((f) => f.field === "message" && f.op === "contains");
+  const searched = si >= 0 ? spec.filters[si].value : "";
+  const [text, setText] = useState(searched);
+  // a preset, Clear or a loaded query changes it from outside; typing (trailing space and all) doesn't
+  useEffect(() => { if (searched !== text.trim()) setText(searched); }, [searched]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const search = (v: string) => {
+    setText(v);
+    const rest = spec.filters.filter((_, j) => j !== si);
+    setSpec({ ...spec, filters: v.trim() ? [{ field: "message", op: "contains", value: v.trim() }, ...rest] : rest });
+  };
+  const pills = spec.filters.map((f, i) => [f, i] as const).filter(([, i]) => i !== si);
   const preset = (p: Partial<Spec>) => setSpec({ ...EMPTY, minutes: spec.minutes, ...p });
+  const setFilter = (i: number, nf: Filter) => setSpec({ ...spec, filters: spec.filters.map((x, j) => (j === i ? nf : x)) });
   return (
     <form className="builder" onSubmit={(e) => { e.preventDefault(); onRun(); }}>
       <div className="presets" role="group" aria-label="Start from">
         <span className="muted small">Start from</span>
         {PRESETS.map(([name, p]) => <button key={name} type="button" className="ask-example" onClick={() => preset(p)}>{name}</button>)}
       </div>
+      <input type="search" className="builder-search" value={text} onChange={(e) => search(e.target.value)}
+        placeholder="Search the message text, e.g. timeout or order 1042" aria-label="Search the message text" />
       <div className="sentence">
         <span>Show</span>
         <Pop label={what} title="What to measure">{(close) => (
@@ -109,38 +131,39 @@ function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpe
             <div className="pop-title">Measure</div>
             <ul className="val-list">{measures.map((m) => (
               <li key={m}><button type="button" aria-pressed={spec.measure.fn === m} onClick={() => {
-                setSpec({ ...spec, measure: { fn: m, field: m === "count" ? undefined : spec.measure.field ?? (fields[0] ? `@${fields[0]}` : "host") } });
-                if (m === "count") close();
-              }}>{MEASURE_LABEL[m]}{m === "count" ? "" : "…"}</button></li>))}</ul>
-            {spec.measure.fn !== "count" && <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Measure field" />}
+                const noField = m === "count" || m === "lines";
+                setSpec({ ...spec, measure: { fn: m, field: noField ? undefined : spec.measure.field ?? (fields[0] ? `@${fields[0]}` : "host") } });
+                if (noField) close();
+              }}>{MEASURE_LABEL[m]}{m === "count" || m === "lines" ? "" : "…"}</button></li>))}</ul>
+            {!plain && <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Measure field" />}
           </div>)}
         </Pop>
         <span>from the</span>
         <Pop label={RANGE_WORDS[range]} title="Time range">{(close) => (
           <TimeRange value={range} onChange={(r) => { setSpec({ ...spec, minutes: RANGES.find(([k]) => k === r)![1] }); close(); }} />)}
         </Pop>
-        {spec.filters.length > 0 && <span>where</span>}
-        {spec.filters.map((f, i) => (
+        {pills.length > 0 && <span>where</span>}
+        {pills.map(([f, i], n) => (
           <span key={i} className="chip-group">
-            {i > 0 && <span className="muted">and</span>}
+            {n > 0 && <span className="muted">and</span>}
             <Pop className="on" label={<>{label(f.field)} <span className="pill-op">{OP_LABEL[f.op] ?? f.op}</span> {f.value}</>} title="Edit filter">{(close) => (
-              <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: spec.filters.map((x, j) => (j === i ? nf : x)) }); close(); }} />)}
+              <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setFilter(i, nf); close(); }} />)}
             </Pop>
             <button type="button" className="pill-x" aria-label={`Remove filter ${label(f.field)}`} onClick={() => setSpec({ ...spec, filters: spec.filters.filter((_, j) => j !== i) })}>×</button>
           </span>
         ))}
-        <Pop className="add" label={spec.filters.length ? "+ and" : "+ filter"} title="Narrow it down">{(close) => (
+        <Pop className="add" label={pills.length ? "+ and" : "+ filter"} title="Narrow it down">{(close) => (
           <FilterEdit fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: [...spec.filters, nf] }); close(); }} />)}
         </Pop>
-        {spec.group_by.length > 0 && <span>per</span>}
-        {spec.group_by.map((g, i) => (
+        {!lines && spec.group_by.length > 0 && <span>per</span>}
+        {!lines && spec.group_by.map((g, i) => (
           <span key={g} className="chip-group">
             {i > 0 && <span className="muted">and</span>}
             <span className="pill on static">{label(g)}</span>
             <button type="button" className="pill-x" aria-label={`Stop splitting by ${label(g)}`} onClick={() => setSpec({ ...spec, group_by: spec.group_by.filter((x) => x !== g) })}>×</button>
           </span>
         ))}
-        {spec.group_by.length < 2 && (
+        {!lines && spec.group_by.length < 2 && (
           <Pop className="add" label={spec.group_by.length ? "+ and" : "+ split by"} title="Break it down">{(close) => {
             const pick = (v: string) => { if (v && !spec.group_by.includes(v)) setSpec({ ...spec, group_by: [...spec.group_by, v] }); close(); };
             return (
@@ -151,20 +174,70 @@ function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpe
               </div>);
           }}</Pop>
         )}
-        <Segmented label="Shape" value={spec.over_time ? "time" : "total"} onChange={(v) => setSpec({ ...spec, over_time: v === "time" })}
-          options={[["total", "as a total"], ["time", "over time"]]} />
+        {!lines && <Segmented label="Shape" value={spec.over_time ? "time" : "total"} onChange={(v) => setSpec({ ...spec, over_time: v === "time" })}
+          options={[["total", "as a total"], ["time", "over time"]]} />}
       </div>
       <div className="row">
         <button className="btn primary" disabled={running}>{running ? <><span className="spin" aria-hidden="true" />Running…</> : "Run"}</button>
-        <span className="muted small">Updates as you change it. Read-only.</span>
+        <span className="muted small">{lines ? "Newest first. Click a service, host, level or field to narrow it down." : "Updates as you change it. Click a result row to drill in."}</span>
         {spec.filters.length + spec.group_by.length > 0 && <button type="button" className="btn small ghost" onClick={() => setSpec({ ...EMPTY, minutes: spec.minutes })}>Clear</button>}
       </div>
     </form>
   );
 }
 
-export function ResultView({ r }: { r: QueryResult }) {
+type Drill = (add: Filter[], lines: boolean) => void;
+
+/** The field a cell value can filter on, or "": group-by columns, and a line's host/service/level. */
+function drillFields(cols: string[], ran?: Spec): string[] {
+  if (!ran) return cols.map(() => "");
+  if (ran.measure.fn === "lines") return cols.map((c) => (["host", "service", "level"].includes(c) ? c : ""));
+  const off = ran.over_time ? 1 : 0;
+  return cols.map((_, j) => ran.group_by.slice(0, 2)[j - off] ?? "");
+}
+
+function payloadOf(v: unknown): Record<string, unknown> {
+  if (typeof v === "string") { try { const o = JSON.parse(v); return o && typeof o === "object" ? o : {}; } catch { return {}; } }
+  return v && typeof v === "object" ? v as Record<string, unknown> : {};
+}
+
+function LinesView({ r, onDrill }: { r: QueryResult; onDrill?: Drill }) {
+  const at = (c: string) => r.columns.indexOf(c);
+  const chip = (field: string, value: unknown, text = String(value)) => value === null || value === undefined || value === "" ? null : onDrill
+    ? <button type="button" className="chip-btn" title={`Only ${label(field)} ${String(value)}`} onClick={() => onDrill([{ field, op: "=", value: String(value) }], true)}>{text}</button>
+    : <span className="chip-btn">{text}</span>;
+  return (
+    <ul className="line-list">
+      {r.rows.map((row, i) => {
+        const level = String(row[at("level")] ?? "info");
+        const fields = Object.entries(payloadOf(row[at("payload")])).filter(([k]) => k !== "timestamp" && k !== "device_id");
+        return (
+          <li key={i} className="line-item">
+            <div className="line-meta">
+              <span className={`lvl lvl-${level}`}>{onDrill ? <button type="button" onClick={() => onDrill([{ field: "level", op: "=", value: level }], true)} title={`Only ${level}`}>{level}</button> : level}</span>
+              <span className="muted small num">{new Date(String(row[at("timestamp")])).toLocaleString()}</span>
+              {chip("service", row[at("service")])}
+              {chip("host", row[at("host")])}
+            </div>
+            <div className="mono small line-msg">{String(row[at("message")] ?? "")}</div>
+            {fields.length > 0 && <div className="row line-fields">{fields.map(([k, v]) => <span key={k}>{chip(`@${k}`, v, `@${k} = ${String(v)}`)}</span>)}</div>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function ResultView({ r, ran, onDrill }: { r: QueryResult; ran?: Spec; onDrill?: Drill }) {
   const cols = r.columns;
+  if (ran?.measure.fn === "lines") return (
+    <Card title={`${r.rows.length} line${r.rows.length === 1 ? "" : "s"}`} hint="newest first">
+      {r.rows.length === 0 ? <Empty title="No lines">Widen the time range, change the search or remove a filter.</Empty> : <LinesView r={r} onDrill={onDrill} />}
+    </Card>
+  );
+  const by = drillFields(cols, ran);
+  const canDrill = !!onDrill && by.some(Boolean);
+  const pick = (row: unknown[]) => by.flatMap((f, j) => (f && row[j] !== null ? [{ field: f, op: "=", value: String(row[j]) }] : []));
   const chart = <AutoChart columns={cols} rows={r.rows} />;
   return (
     <Card title={`${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={`${r.engine} · ${r.table}`}>
@@ -173,12 +246,17 @@ export function ResultView({ r }: { r: QueryResult }) {
           {chart}
           <div className="table-wrap" style={{ maxHeight: 420, overflow: "auto" }}>
             <table>
-              <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+              <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}{canDrill && <th><span className="sr-only">Drill in</span></th>}</tr></thead>
               <tbody>
                 {r.rows.map((row, i) => (
-                  <tr key={i}>{row.map((v, j) => (
+                  <tr key={i} className={canDrill ? "drill-row" : ""}>{row.map((v, j) => (
                     <td key={j} className={`mono small ${typeof v === "number" ? "right num" : ""}`}>{typeof v === "object" && v !== null ? JSON.stringify(v) : v === null ? <span className="muted">null</span> : String(v)}</td>
-                  ))}</tr>
+                  ))}
+                  {canDrill && <td className="drill-actions">{pick(row).length > 0 && <>
+                    <button type="button" className="btn small ghost" onClick={() => onDrill!(pick(row), false)}>Only this</button>
+                    <button type="button" className="btn small" onClick={() => onDrill!(pick(row), true)}>See lines</button>
+                  </>}</td>}
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -212,6 +290,13 @@ export default function Query() {
   const error = tab === "builder" ? build.error : run.error;
   const currentSql = tab === "builder" ? build.data?.sql : sql;
   const key = JSON.stringify(spec);
+  // a result row or a line's chip becomes a filter (replacing one on the same field); "See lines" lists them
+  const drill: Drill = (add, showLines) => setSpec((s) => ({
+    ...s,
+    filters: [...s.filters.filter((f) => !add.some((a) => a.field === f.field)), ...add],
+    group_by: s.group_by.filter((g) => !add.some((a) => a.field === g)),
+    ...(showLines ? { measure: { fn: "lines" }, over_time: false } : {}),
+  }));
   // the builder runs itself a moment after each change, so a new user sees an answer at once
   useEffect(() => {
     if (tab !== "builder" || spec.filters.some((f) => !f.value)) return;
@@ -302,7 +387,7 @@ export default function Query() {
               </div>
             )}
           </Card>
-          {result && <ResultView r={result} />}
+          {result && <ResultView r={result} ran={tab === "builder" ? build.variables : undefined} onDrill={tab === "builder" ? drill : undefined} />}
         </div>
       </div>
     </>
