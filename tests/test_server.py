@@ -663,6 +663,7 @@ def test_template_links_show_who_made_them_and_can_be_undone(env):
     assert client.post(f"/api/templates/{a}/link", json={"target": b}).json()["alias_of"] == b
     tpl = {t["template_id"]: t for t in client.get("/api/templates").json()["templates"]}
     assert tpl[a]["linked_by"] == "you" and tpl[a]["canonical"] == b and tpl[b]["linked"] == [a]
+    assert client.get("/api/overview").json()["auto_links"] == 0  # yours are not announced
     send(server, client, headers, events(["worker 1 finished job 5"], start=900))
     assert (
         client.get("/api/logs", params={"q": "job 5", "limit": 1}).json()["logs"][0]["template_id"]
@@ -723,6 +724,17 @@ def test_query_builder_schema_saved_and_ask(env):
         },
     ).json()
     assert avg["result"]["rows"] == [[20.0]]  # 0,10,20,30,40 ms evenly
+    found = client.post(
+        "/api/query/build",
+        json={
+            "minutes": 60,
+            "measure": {"fn": "lines"},
+            "group_by": ["service"],  # ignored for lines
+            "filters": [{"field": "message", "op": "contains", "value": "disk"}],
+        },
+    ).json()["result"]
+    assert found["columns"] == ["timestamp", "host", "service", "level", "message", "payload"]
+    assert [r[2:5] for r in found["rows"]] == [["db", "error", "ERROR disk full"]]
     over = client.post("/api/query/build", json={"minutes": 60, "over_time": True}).json()
     assert (
         sum(r[-1] for r in over["result"]["rows"]) == 64 and over["result"]["columns"][0] == "time"
@@ -957,6 +969,18 @@ def test_incidents_group_alerts_explain_lines_and_learn_false_positives(env):
     assert [i["note"] for i in fp] == ["nightly batch"]
     assert client.put(f"/api/incidents/{iid}", json={"status": "nope"}).status_code == 400
     assert client.get("/api/incidents/missing").status_code == 404
+    # status changes and comments share one timeline, oldest first
+    assert client.post(f"/api/incidents/{iid}/comments", json={"text": "  "}).status_code == 400
+    assert client.post("/api/incidents/missing/comments", json={"text": "x"}).status_code == 404
+    client.post(f"/api/incidents/{iid}/comments", json={"text": "batch runs at 02:00"})
+    client.put(
+        f"/api/incidents/{iid}", json={"status": "false_positive", "note": "same"}
+    )  # no change: no entry
+    act = client.get(f"/api/incidents/{iid}").json()["activity"]
+    assert [(a["kind"], a.get("status"), a["text"]) for a in act] == [
+        ("status", "false_positive", "nightly batch"),
+        ("comment", None, "batch runs at 02:00"),
+    ]
 
 
 def test_firmware_changes_a_variable_is_linked_by_itself_a_rewording_needs_the_llm(env):
@@ -983,5 +1007,6 @@ def test_firmware_changes_a_variable_is_linked_by_itself_a_rewording_needs_the_l
     currency = next(t for t in new if t["text"].startswith("checkout"))
     reworded = next(t for t in new if "completed" in t["text"])
     assert currency["alias_of"] == old and currency["linked_by"] == "pipeline"
+    assert client.get("/api/overview").json()["auto_links"] == 1
     assert currency["link_reason"] == "differs only in variable slots"
     assert reworded["alias_of"] is None  # offline: rewording is never linked without an LLM

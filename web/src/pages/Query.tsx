@@ -1,13 +1,12 @@
-// Query: ask in plain English, build a question as a sentence of pills (measure, time, filters,
-// split), or write SQL. Saved queries sit in a menu; the schema list shows on the SQL tab.
-import { useEffect, useState } from "react";
+// Query: ask in plain English, build a question in three plain steps (what to show, which lines,
+// one row per what), or write SQL. Saved queries sit in a menu; the schema list shows on the SQL tab.
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type QueryResult } from "../api";
-import { RANGES, TimeRange } from "../charts";
+import { AutoChart, RANGES, TimeRange } from "../charts";
 import { AskPanel } from "../ask";
-import { Card, Empty, PageHead, Pop, Segmented, fmt } from "../ui";
+import { Card, Empty, PageHead, Pop, fmt } from "../ui";
 
 interface Schema {
   engine: string; table: string; payload_access: string; measures: string[]; ops: string[];
@@ -18,19 +17,18 @@ interface Filter { field: string; op: string; value: string }
 interface Spec { minutes: number; filters: Filter[]; measure: { fn: string; field?: string }; group_by: string[]; over_time: boolean; limit: number }
 
 const BASE = ["host", "service", "source", "level", "status", "template_id", "message"];
-const MEASURE_LABEL: Record<string, string> = { count: "Count of lines", count_distinct: "Distinct values of", avg: "Average of", min: "Minimum of", max: "Maximum of", sum: "Sum of", p95: "95th percentile of" };
-// Categorical order, fixed: a series keeps its colour; past six, groups fold into the table only.
-const PALETTE = ["#3b6fd4", "#e07b1a", "#2a9d8f", "#9b5de5", "#c2a40e", "#8a8f98"];
 type Tab = "ask" | "builder" | "sql";
 const TABS: [Tab, string][] = [["ask", "Ask"], ["builder", "Builder"], ["sql", "SQL"]];
 const EMPTY: Spec = { minutes: 60, filters: [], measure: { fn: "count" }, group_by: [], over_time: false, limit: 100 };
+const START: Spec = { ...EMPTY, measure: { fn: "lines" } };  // what a new visitor wants first: the lines
 
-const FIELD_LABEL: Record<string, string> = { template_id: "kind of line", message: "message text" };
+const FIELD_LABEL: Record<string, string> = { template_id: "kind of line", message: "message text", lines: "lines" };
 const label = (f: string) => FIELD_LABEL[f] ?? f;
 const OP_LABEL: Record<string, string> = { "=": "is", "!=": "is not", contains: "contains", "not contains": "doesn't contain", ">": "above", "<": "below", in: "is one of" };
 const RANGE_WORDS: Record<string, string> = { "15m": "last 15 minutes", "1h": "last hour", "4h": "last 4 hours", "1d": "last day", "7d": "last 7 days" };
 const QUICK = ["level", "service", "host"];
 const PRESETS: [string, Partial<Spec>][] = [
+  ["Latest errors", { measure: { fn: "lines" }, filters: [{ field: "level", op: "=", value: "error" }], limit: 50 }],
   ["Errors by service", { filters: [{ field: "level", op: "=", value: "error" }], group_by: ["service"] }],
   ["Volume over time", { over_time: true }],
   ["Errors over time", { filters: [{ field: "level", op: "=", value: "error" }], group_by: ["service"], over_time: true }],
@@ -65,6 +63,10 @@ function FilterEdit({ init, fields, ops, minutes, onDone }: { init?: Filter; fie
     <div className="stack" style={{ gap: 8 }}>
       <div className="pop-title">Filter on</div>
       <div className="row" style={{ gap: 6 }}>{QUICK.map((q) => <button key={q} type="button" className="btn small" onClick={() => setF({ ...f, field: q })}>{label(q)}</button>)}</div>
+      {fields.length > 0 && <>
+        <div className="pop-title">Extracted from your lines</div>
+        <div className="row" style={{ gap: 6 }}>{fields.slice(0, 8).map((x) => <button key={x} type="button" className="btn small mono" onClick={() => setF({ ...f, field: `@${x}` })}>@{x}</button>)}</div>
+      </>}
       <FieldSelect allowNone value="" onChange={(v) => setF({ ...f, field: v })} fields={fields} label="Other field" />
     </div>
   );
@@ -92,137 +94,239 @@ function FilterEdit({ init, fields, ops, minutes, onDone }: { init?: Filter; fie
   );
 }
 
-function Builder({ spec, setSpec, schema, onRun, running }: { spec: Spec; setSpec: (s: Spec) => void; schema?: Schema; onRun: () => void; running: boolean }) {
+type Mode = "lines" | "count" | "trend" | "number";
+const ICON: Record<Mode, string> = {
+  lines: "M4 6h16M4 12h16M4 18h10",
+  count: "M9 4L7 20M17 4l-2 16M4 9h16M3 15h16",
+  trend: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  number: "M18 5H6l6 7-6 7h12",
+};
+const MODES: [Mode, string, string][] = [
+  ["lines", "Log lines", "The lines themselves"],
+  ["count", "How many", "Count the matching lines"],
+  ["trend", "Over time", "How that count changes"],
+  ["number", "A number", "Average, max… of a field"],
+];
+const STATS: [string, string][] = [["avg", "Average"], ["max", "Maximum"], ["min", "Minimum"], ["sum", "Sum"], ["p95", "95th percentile"], ["count_distinct", "Different values of"]];
+const SPLITS = ["service", "host", "level", "template_id"];
+
+// a field that is probably a number (duration_ms, bytes, …) beats the alphabetically first one
+const numericGuess = (fields: string[]) => {
+  const f = fields.find((x) => /ms|duration|latency|took|time|bytes|size|count|number|status|code/i.test(x)) ?? fields[0];
+  return f ? `@${f}` : "template_id";
+};
+const modeOf = (s: Spec): Mode => s.measure.fn === "lines" ? "lines" : s.measure.fn === "count" ? (s.over_time ? "trend" : "count") : "number";
+
+function Glyph({ d }: { d: string }) {
+  return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
+}
+
+/** Three plain questions: what to show, which lines, and (for numbers) how to break it down. */
+function Builder({ spec, setSpec, schema }: { spec: Spec; setSpec: (s: Spec) => void; schema?: Schema }) {
   const fields = schema?.fields ?? [];
   const ops = schema?.ops ?? ["="];
+  const mode = modeOf(spec);
   const range = RANGES.find(([, m]) => m === spec.minutes)?.[0] ?? "1h";
-  const measures = (schema?.measures ?? ["count"]).filter((m) => m !== "p95" || schema?.engine === "clickhouse");
-  const what = spec.measure.fn === "count" ? "the number of lines" : `${MEASURE_LABEL[spec.measure.fn].toLowerCase()} ${spec.measure.field ?? ""}`;
-  const preset = (p: Partial<Spec>) => setSpec({ ...EMPTY, minutes: spec.minutes, ...p });
+  const stats = STATS.filter(([fn]) => (schema?.measures ?? []).includes(fn) && (fn !== "p95" || schema?.engine === "clickhouse"));
+  const setMode = (m: Mode) => setSpec({
+    ...spec,
+    over_time: m === "trend",
+    measure: m === "lines" ? { fn: "lines" } : m === "number"
+      ? { fn: modeOf(spec) === "number" ? spec.measure.fn : "avg", field: spec.measure.field ?? numericGuess(fields) }
+      : { fn: "count" },
+  });
+  // the search box is the first "message contains" filter; the other filters are chips
+  const si = spec.filters.findIndex((f) => f.field === "message" && f.op === "contains");
+  const searched = si >= 0 ? spec.filters[si].value : "";
+  const [text, setText] = useState(searched);
+  // a preset, Clear or a loaded query changes it from outside; typing (trailing space and all) doesn't
+  useEffect(() => { if (searched !== text.trim()) setText(searched); }, [searched]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const search = (v: string) => {
+    setText(v);
+    const rest = spec.filters.filter((_, j) => j !== si);
+    setSpec({ ...spec, filters: v.trim() ? [{ field: "message", op: "contains", value: v.trim() }, ...rest] : rest });
+  };
+  const chips = spec.filters.map((f, i) => [f, i] as const).filter(([, i]) => i !== si);
+  const setFilter = (i: number, nf: Filter) => setSpec({ ...spec, filters: spec.filters.map((x, j) => (j === i ? nf : x)) });
+  const toggleSplit = (g: string) => setSpec({ ...spec, group_by: spec.group_by.includes(g) ? spec.group_by.filter((x) => x !== g) : [...spec.group_by, g].slice(-2) });
+  const extraSplits = spec.group_by.filter((g) => !SPLITS.includes(g));
+  const changed = spec.filters.length > 0 || spec.group_by.length > 0 || spec.minutes !== START.minutes || mode !== "lines";
+
   return (
-    <form className="builder" onSubmit={(e) => { e.preventDefault(); onRun(); }}>
-      <div className="presets" role="group" aria-label="Start from">
-        <span className="muted small">Start from</span>
-        {PRESETS.map(([name, p]) => <button key={name} type="button" className="ask-example" onClick={() => preset(p)}>{name}</button>)}
+    <div className="qb">
+      <div className="qb-try">
+        <span className="muted small">Try</span>
+        {PRESETS.map(([name, p]) => <button key={name} type="button" className="link-btn small" onClick={() => setSpec({ ...EMPTY, minutes: spec.minutes, ...p })}>{name}</button>)}
+        {changed && <button type="button" className="link-btn small qb-reset" onClick={() => setSpec({ ...START })}>Start over</button>}
       </div>
-      <div className="sentence">
-        <span>Show</span>
-        <Pop label={what} title="What to measure">{(close) => (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="pop-title">Measure</div>
-            <ul className="val-list">{measures.map((m) => (
-              <li key={m}><button type="button" aria-pressed={spec.measure.fn === m} onClick={() => {
-                setSpec({ ...spec, measure: { fn: m, field: m === "count" ? undefined : spec.measure.field ?? (fields[0] ? `@${fields[0]}` : "host") } });
-                if (m === "count") close();
-              }}>{MEASURE_LABEL[m]}{m === "count" ? "" : "…"}</button></li>))}</ul>
-            {spec.measure.fn !== "count" && <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Measure field" />}
-          </div>)}
-        </Pop>
-        <span>from the</span>
-        <Pop label={RANGE_WORDS[range]} title="Time range">{(close) => (
-          <TimeRange value={range} onChange={(r) => { setSpec({ ...spec, minutes: RANGES.find(([k]) => k === r)![1] }); close(); }} />)}
-        </Pop>
-        {spec.filters.length > 0 && <span>where</span>}
-        {spec.filters.map((f, i) => (
-          <span key={i} className="chip-group">
-            {i > 0 && <span className="muted">and</span>}
-            <Pop className="on" label={<>{label(f.field)} <span className="pill-op">{OP_LABEL[f.op] ?? f.op}</span> {f.value}</>} title="Edit filter">{(close) => (
-              <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: spec.filters.map((x, j) => (j === i ? nf : x)) }); close(); }} />)}
+
+      <section className="qb-step" aria-labelledby="qb-show">
+        <h3 id="qb-show" className="qb-label">Show</h3>
+        <div className="stack" style={{ gap: 10 }}>
+          <div className="qb-modes" role="radiogroup" aria-labelledby="qb-show">
+            {MODES.map(([m, title, hint]) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} className="qb-mode" onClick={() => setMode(m)}>
+                <Glyph d={ICON[m]} />
+                <span><strong>{title}</strong><span className="small">{hint}</span></span>
+              </button>
+            ))}
+          </div>
+          {mode === "number" && (
+            <div className="row qb-number">
+              <select aria-label="Which number" value={spec.measure.fn} onChange={(e) => setSpec({ ...spec, measure: { ...spec.measure, fn: e.target.value } })}>
+                {stats.map(([fn, name]) => <option key={fn} value={fn}>{name}</option>)}
+              </select>
+              <span className="muted">of</span>
+              <FieldSelect value={spec.measure.field ?? ""} onChange={(v) => setSpec({ ...spec, measure: { ...spec.measure, field: v } })} fields={fields} label="Field" />
+              <label className="row qb-check"><input type="checkbox" checked={spec.over_time} onChange={(e) => setSpec({ ...spec, over_time: e.target.checked })} /> over time</label>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="qb-step" aria-labelledby="qb-which">
+        <h3 id="qb-which" className="qb-label">Which lines</h3>
+        <div className="stack" style={{ gap: 10 }}>
+          <div className="row qb-which">
+            <Pop className="qb-time" label={<>{RANGE_WORDS[range][0].toUpperCase() + RANGE_WORDS[range].slice(1)}</>} title="Time range">{(close) => (
+              <TimeRange value={range} onChange={(r) => { setSpec({ ...spec, minutes: RANGES.find(([k]) => k === r)![1] }); close(); }} />)}
             </Pop>
-            <button type="button" className="pill-x" aria-label={`Remove filter ${label(f.field)}`} onClick={() => setSpec({ ...spec, filters: spec.filters.filter((_, j) => j !== i) })}>×</button>
-          </span>
-        ))}
-        <Pop className="add" label={spec.filters.length ? "+ and" : "+ filter"} title="Narrow it down">{(close) => (
-          <FilterEdit fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: [...spec.filters, nf] }); close(); }} />)}
-        </Pop>
-        {spec.group_by.length > 0 && <span>per</span>}
-        {spec.group_by.map((g, i) => (
-          <span key={g} className="chip-group">
-            {i > 0 && <span className="muted">and</span>}
-            <span className="pill on static">{label(g)}</span>
-            <button type="button" className="pill-x" aria-label={`Stop splitting by ${label(g)}`} onClick={() => setSpec({ ...spec, group_by: spec.group_by.filter((x) => x !== g) })}>×</button>
-          </span>
-        ))}
-        {spec.group_by.length < 2 && (
-          <Pop className="add" label={spec.group_by.length ? "+ and" : "+ split by"} title="Break it down">{(close) => {
-            const pick = (v: string) => { if (v && !spec.group_by.includes(v)) setSpec({ ...spec, group_by: [...spec.group_by, v] }); close(); };
-            return (
-              <div className="stack" style={{ gap: 8 }}>
-                <div className="pop-title">One row (or line) per</div>
-                <div className="row" style={{ gap: 6 }}>{["service", "host", "level"].filter((q) => !spec.group_by.includes(q)).map((q) => <button key={q} type="button" className="btn small" onClick={() => pick(q)}>{label(q)}</button>)}</div>
-                <FieldSelect allowNone value="" onChange={pick} fields={fields} label="Other field" />
-              </div>);
-          }}</Pop>
-        )}
-        <Segmented label="Shape" value={spec.over_time ? "time" : "total"} onChange={(v) => setSpec({ ...spec, over_time: v === "time" })}
-          options={[["total", "as a total"], ["time", "over time"]]} />
-      </div>
-      <div className="row">
-        <button className="btn primary" disabled={running}>{running ? <><span className="spin" aria-hidden="true" />Running…</> : "Run"}</button>
-        <span className="muted small">Updates as you change it. Read-only.</span>
-        {spec.filters.length + spec.group_by.length > 0 && <button type="button" className="btn small ghost" onClick={() => setSpec({ ...EMPTY, minutes: spec.minutes })}>Clear</button>}
-      </div>
-    </form>
+            <input type="search" className="qb-search" value={text} onChange={(e) => search(e.target.value)}
+              placeholder="Containing text, e.g. timeout or order 1042" aria-label="Lines containing text" />
+          </div>
+          <div className="row qb-chips">
+            {chips.map(([f, i]) => (
+              <span key={i} className="chip-group">
+                <Pop className="on" label={<>{label(f.field)} <span className="pill-op">{OP_LABEL[f.op] ?? f.op}</span> {f.value}</>} title="Change this filter">{(close) => (
+                  <FilterEdit init={f} fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setFilter(i, nf); close(); }} />)}
+                </Pop>
+                <button type="button" className="pill-x" aria-label={`Remove filter ${label(f.field)}`} onClick={() => setSpec({ ...spec, filters: spec.filters.filter((_, j) => j !== i) })}>×</button>
+              </span>
+            ))}
+            <Pop className="add" label="+ Add filter" title="Only lines where…">{(close) => (
+              <FilterEdit fields={fields} ops={ops} minutes={spec.minutes} onDone={(nf) => { setSpec({ ...spec, filters: [...spec.filters, nf] }); close(); }} />)}
+            </Pop>
+            {chips.length === 0 && <span className="muted small">All levels, services and hosts</span>}
+          </div>
+        </div>
+      </section>
+
+      {mode !== "lines" && (
+        <section className="qb-step" aria-labelledby="qb-split">
+          <h3 id="qb-split" className="qb-label">{mode === "trend" || spec.over_time ? "One line per" : "One row per"}</h3>
+          <div className="row qb-chips">
+            {[...SPLITS, ...extraSplits].map((g) => (
+              <button key={g} type="button" className="qb-toggle" aria-pressed={spec.group_by.includes(g)} onClick={() => toggleSplit(g)}>{label(g)}</button>
+            ))}
+            <FieldSelect allowNone value="" onChange={(v) => v && toggleSplit(v)} fields={fields} label="Another field" />
+            <span className="muted small">{spec.group_by.length ? "Up to two" : "None picked: one total"}</span>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
-export function ResultView({ r }: { r: QueryResult }) {
+type Drill = (add: Filter[], lines: boolean) => void;
+
+/** The field a cell value can filter on, or "": group-by columns, and a line's host/service/level. */
+function drillFields(cols: string[], ran?: Spec): string[] {
+  if (!ran) return cols.map(() => "");
+  if (ran.measure.fn === "lines") return cols.map((c) => (["host", "service", "level"].includes(c) ? c : ""));
+  const off = ran.over_time ? 1 : 0;
+  return cols.map((_, j) => ran.group_by.slice(0, 2)[j - off] ?? "");
+}
+
+function payloadOf(v: unknown): Record<string, unknown> {
+  if (typeof v === "string") { try { const o = JSON.parse(v); return o && typeof o === "object" ? o : {}; } catch { return {}; } }
+  return v && typeof v === "object" ? v as Record<string, unknown> : {};
+}
+
+function LinesView({ r, onDrill }: { r: QueryResult; onDrill?: Drill }) {
+  const at = (c: string) => r.columns.indexOf(c);
+  const chip = (field: string, value: unknown, text = String(value)) => value === null || value === undefined || value === "" ? null : onDrill
+    ? <button type="button" className="chip-btn" title={`Only ${label(field)} ${String(value)}`} onClick={() => onDrill([{ field, op: "=", value: String(value) }], true)}>{text}</button>
+    : <span className="chip-btn">{text}</span>;
+  return (
+    <ul className="line-list">
+      {r.rows.map((row, i) => {
+        const level = String(row[at("level")] ?? "info");
+        const fields = Object.entries(payloadOf(row[at("payload")])).filter(([k]) => k !== "timestamp" && k !== "device_id");
+        return (
+          <li key={i} className="line-item">
+            <div className="line-meta">
+              <span className={`lvl lvl-${level}`}>{onDrill ? <button type="button" onClick={() => onDrill([{ field: "level", op: "=", value: level }], true)} title={`Only ${level}`}>{level}</button> : level}</span>
+              <span className="muted small num">{new Date(String(row[at("timestamp")])).toLocaleString()}</span>
+              {chip("service", row[at("service")])}
+              {chip("host", row[at("host")])}
+            </div>
+            <div className="mono small line-msg">{String(row[at("message")] ?? "")}</div>
+            {fields.length > 0 && <div className="row line-fields">{fields.map(([k, v]) => <span key={k}>{chip(`@${k}`, v, `@${k} = ${String(v)}`)}</span>)}</div>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** What a result is called: "51 lines", "4 services", "12 points". */
+function titleOf(r: QueryResult, ran?: Spec) {
+  const n = r.rows.length;
+  if (ran?.measure.fn === "lines") return `${fmt(n)} line${n === 1 ? "" : "s"}`;
+  if (ran?.over_time) return `${fmt(n)} point${n === 1 ? "" : "s"} in time`;
+  const g = ran?.group_by[0];
+  if (g) return `${fmt(n)} ${label(g)}${n === 1 ? "" : g === "template_id" ? "s" : g.endsWith("s") ? "es" : "s"}`;
+  return `${fmt(n)} row${n === 1 ? "" : "s"}`;
+}
+
+export function ResultView({ r, ran, onDrill, busy, actions }: { r?: QueryResult; ran?: Spec; onDrill?: Drill; busy?: boolean; actions?: ReactNode }) {
+  if (!r) return <Card title="Working…" actions={actions}><div className="muted small">Running the first query.</div></Card>;
   const cols = r.columns;
-  const numericLast = r.rows.length > 0 && r.rows.every((row) => typeof row[row.length - 1] === "number" || row[row.length - 1] === null);
-  const timeCol = cols[0] === "time" && numericLast;
-  const value = cols[cols.length - 1];
-  let chart = null;
-  if (timeCol) {
-    const groupIdx = cols.length > 2 ? 1 : -1;
-    const totals = new Map<string, number>();
-    r.rows.forEach((row) => { const g = groupIdx < 0 ? value : String(row[groupIdx]); totals.set(g, (totals.get(g) ?? 0) + Number(row[row.length - 1] ?? 0)); });
-    const series = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, PALETTE.length).map(([g]) => g);
-    const byTime = new Map<string, Record<string, number | string>>();
-    r.rows.forEach((row) => {
-      const t = String(row[0]); const g = groupIdx < 0 ? value : String(row[groupIdx]);
-      if (!series.includes(g)) return;
-      byTime.set(t, { ...(byTime.get(t) ?? { time: t }), [g]: Number(row[row.length - 1] ?? 0) });
-    });
-    const data = [...byTime.values()];
-    chart = (
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--grid)" />
-          <XAxis dataKey="time" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(t: string) => new Date(t.replace(" ", "T") + (t.includes("Z") || t.includes("+") ? "" : "Z")).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
-          <YAxis width={44} tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
-          <Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
-          {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
-          {series.map((g, i) => <Line key={g} dataKey={g} stroke={PALETTE[i]} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />)}
-        </LineChart>
-      </ResponsiveContainer>
-    );
-  } else if (numericLast && cols.length === 2 && r.rows.length > 1) {
-    const data = r.rows.slice(0, 20).map((row) => ({ k: String(row[0]), v: Number(row[1] ?? 0) }));
-    chart = (
-      <ResponsiveContainer width="100%" height={Math.max(120, data.length * 26)}>
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
-          <CartesianGrid horizontal={false} stroke="var(--grid)" />
-          <XAxis type="number" tick={{ fill: "var(--muted)", fontSize: 11 }} tickFormatter={(n: number) => fmt(n)} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="k" width={160} tick={{ fill: "var(--ink-2)", fontSize: 12 }} axisLine={false} tickLine={false} />
-          <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", fontSize: 12 }} />
-          <Bar dataKey="v" name={value} fill={PALETTE[0]} radius={[0, 4, 4, 0]} isAnimationActive={false} />
-        </BarChart>
-      </ResponsiveContainer>
+  const hint = busy ? "Updating…" : ran ? (ran.measure.fn === "lines" ? "newest first · click a service, host, level or field to narrow it down" : "") : `${r.engine} · ${r.table}`;
+  if (ran?.measure.fn === "lines") return (
+    <Card title={titleOf(r, ran)} hint={hint} actions={actions} className={busy ? "is-busy" : ""}>
+      {r.rows.length === 0 ? <Empty title="No lines match">Widen the time range, change the text or remove a filter.</Empty> : <LinesView r={r} onDrill={onDrill} />}
+    </Card>
+  );
+  // one number and nothing to break it down by: say it, don't tabulate it
+  if (ran && r.rows.length === 1 && cols.length === 1) {
+    const v = r.rows[0][0];
+    const what = ran.measure.fn === "count" ? "matching lines" : `${STATS.find(([fn]) => fn === ran.measure.fn)?.[1].toLowerCase() ?? ran.measure.fn} of ${ran.measure.field}`;
+    return (
+      <Card title="Answer" hint={hint} actions={actions} className={busy ? "is-busy" : ""}>
+        <p className="qb-answer"><strong className="num">{typeof v === "number" ? fmt(Math.round(v * 100) / 100) : v === null ? "no value" : String(v)}</strong> {what}
+          <span className="muted"> · {RANGE_WORDS[RANGES.find(([, m]) => m === ran.minutes)?.[0] ?? "1h"]}</span></p>
+        {ran.measure.fn === "count" && onDrill && <button type="button" className="btn small" onClick={() => onDrill([], true)}>See these lines</button>}
+      </Card>
     );
   }
+  const by = drillFields(cols, ran);
+  const canDrill = !!onDrill && by.some(Boolean);
+  const pick = (row: unknown[]) => by.flatMap((f, j) => (f && row[j] !== null ? [{ field: f, op: "=", value: String(row[j]) }] : []));
+  const chart = <AutoChart columns={cols} rows={r.rows} />;
+  const numeric = cols.map((_, j) => r.rows.some((row) => typeof row[j] === "number"));
+  const head = (c: string, j: number) => !ran ? c : j === cols.length - 1 && ran.measure.fn !== "count"
+    ? `${STATS.find(([fn]) => fn === ran.measure.fn)?.[1] ?? ran.measure.fn} of ${ran.measure.field}` : label(c);
+  // builder results read rounded; raw SQL results stay exact
+  const cell = (v: unknown) => typeof v === "number" ? (ran ? (Math.round(v * 100) / 100).toLocaleString() : String(v)) : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
   return (
-    <Card title={`${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={`${r.engine} · ${r.table}`}>
-      {r.rows.length === 0 ? <Empty title="No rows">Widen the time range or remove a filter.</Empty> : (
+    <Card title={ran ? titleOf(r, ran) : `${r.rows.length} row${r.rows.length === 1 ? "" : "s"}`} hint={hint || (canDrill ? "hover a row to narrow it down or see its lines" : "")} actions={actions} className={busy ? "is-busy" : ""}>
+      {r.rows.length === 0 ? <Empty title="Nothing matches">Widen the time range or remove a filter.</Empty> : (
         <div className="stack">
           {chart}
           <div className="table-wrap" style={{ maxHeight: 420, overflow: "auto" }}>
             <table>
-              <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+              <thead><tr>{cols.map((c, j) => <th key={c} className={numeric[j] ? "right" : ""}>{head(c, j)}</th>)}{canDrill && <th><span className="sr-only">Narrow down</span></th>}</tr></thead>
               <tbody>
                 {r.rows.map((row, i) => (
-                  <tr key={i}>{row.map((v, j) => (
-                    <td key={j} className={`mono small ${typeof v === "number" ? "right num" : ""}`}>{typeof v === "object" && v !== null ? JSON.stringify(v) : v === null ? <span className="muted">null</span> : String(v)}</td>
-                  ))}</tr>
+                  <tr key={i} className={canDrill ? "drill-row" : ""}>{row.map((v, j) => (
+                    <td key={j} className={`mono small ${numeric[j] ? "right num" : ""}`}>{v === null ? <span className="muted">none</span> : cell(v)}</td>
+                  ))}
+                  {canDrill && <td className="drill-actions">{pick(row).length > 0 && <>
+                    <button type="button" className="btn small ghost" onClick={() => onDrill!(pick(row), false)}>Only this</button>
+                    <button type="button" className="btn small" onClick={() => onDrill!(pick(row), true)}>See lines</button>
+                  </>}</td>}
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -233,17 +337,109 @@ export function ResultView({ r }: { r: QueryResult }) {
   );
 }
 
+/** True on screens wide enough for the column reference beside the editor. */
+function useWide(query = "(min-width: 861px)") {
+  const [wide, setWide] = useState(() => typeof matchMedia === "undefined" || matchMedia(query).matches);
+  useEffect(() => {
+    const m = matchMedia(query);
+    const on = () => setWide(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, [query]);
+  return wide;
+}
+
+const SQL_TRY = ["Latest errors", "Errors by service", "Volume over time", "Busiest hosts", "Most common lines"];
+
+/** Write SQL with working examples to start from and the columns one click away. */
+function SqlEditor({ sql, setSql, schema, onRun, running }: { sql: string; setSql: (s: string) => void; schema?: Schema; onRun: (q: string) => void; running: boolean }) {
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const wide = useWide();
+  const table = schema?.table ?? "logs";
+  const example = useAction((name: string) => api<{ sql: string }>("/api/query/build", { method: "POST",
+    json: { ...EMPTY, ...PRESETS.find(([n]) => n === name)![1] } }));
+  const tryIt = (name: string) => example.mutate(name, { onSuccess: (r) => { setSql(r.sql); onRun(r.sql); } });
+  // at the cursor (or over the selection), not at the end
+  const insert = (text: string) => {
+    const el = ta.current;
+    if (!sql.trim()) { setSql(`SELECT ${text}\nFROM ${table}\nLIMIT 100`); return; }
+    const a = el?.selectionStart ?? sql.length, b = el?.selectionEnd ?? sql.length;
+    const pad = a > 0 && !/[\s(]/.test(sql[a - 1]) ? " " : "";
+    setSql(sql.slice(0, a) + pad + text + sql.slice(b));
+    requestAnimationFrame(() => { el?.focus(); const at = a + pad.length + text.length; el?.setSelectionRange(at, at); });
+  };
+  const reference = schema && (
+    <>
+      <ul className="sql-cols">
+        {schema.columns.map((c) => {
+          const name = c.name === "level (computed)" ? "level" : c.name;
+          return <li key={c.name}><button type="button" title={`${c.about}. Click to insert at the cursor.`} onClick={() => insert(name)}>
+            <code>{name}</code><span className="muted small ellipsis">{c.about}</span></button></li>;
+        })}
+      </ul>
+      {schema.fields.length > 0 && <>
+        <div className="sql-ref-title">Extracted fields</div>
+        <p className="muted small" style={{ margin: "0 0 6px" }}>Read from <code>payload</code>; click to insert the expression.</p>
+        <div className="row" style={{ gap: 4 }}>
+          {schema.fields.map((f) => <button key={f} type="button" className="chip-btn" title={schema.payload_access.replace("name", f)}
+            onClick={() => insert(schema.payload_access.replace("name", f))}>@{f}</button>)}
+        </div>
+      </>}
+    </>
+  );
+  return (
+    <div className="sql">
+      <div className="qb-try">
+        <span className="muted small">Try</span>
+        {SQL_TRY.map((name) => <button key={name} type="button" className="link-btn small" disabled={example.isPending} onClick={() => tryIt(name)}>{name}</button>)}
+        {sql && <button type="button" className="link-btn small qb-reset" onClick={() => { setSql(""); ta.current?.focus(); }}>Clear</button>}
+      </div>
+      <div className="sql-body">
+        <form className="sql-main" onSubmit={(e) => { e.preventDefault(); if (sql.trim()) onRun(sql); }}>
+          <textarea ref={ta} rows={9} className="mono sql-input" value={sql} spellCheck={false} aria-label="SQL query"
+            placeholder={`SELECT service, count(*) AS lines\nFROM ${table}\nGROUP BY service\nORDER BY lines DESC`}
+            onChange={(e) => setSql(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (sql.trim()) onRun(sql); } }} />
+          <div className="row">
+            <button className="btn primary" disabled={!sql.trim() || running}>{running ? <><span className="spin" aria-hidden="true" />Running…</> : "Run"}</button>
+            <span className="muted small"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> runs it · read-only · up to 500 rows</span>
+          </div>
+        </form>
+        {wide
+          ? <aside className="sql-ref" aria-label={`Columns of ${table}`}><div className="sql-ref-title">Columns of <code>{table}</code></div>{reference}</aside>
+          : <details className="sql-ref"><summary className="sql-ref-title">Columns and fields of <code>{table}</code></summary>{reference}</details>}
+      </div>
+    </div>
+  );
+}
+
+/** Name a query and keep it under Saved. */
+function SavePop({ name, setName, onSave, pending, error }: { name: string; setName: (s: string) => void; onSave: (done: () => void) => void; pending: boolean; error?: Error | null }) {
+  return (
+    <Pop className="ghost" label="Save" title="Save this query">{(close) => (
+      <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); onSave(close); }}>
+        <div className="pop-title">Name it to find it under Saved</div>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Checkout errors" aria-label="Query name" />
+        {error && <span className="error-text small">{error.message}</span>}
+        <div className="row"><button className="btn small primary" disabled={!name.trim() || pending}>Save</button></div>
+      </form>)}
+    </Pop>
+  );
+}
+
 export default function Query() {
   const [params, setParams] = useSearchParams();
   const schema = usePoll<Schema>("/api/query/schema", 60000).data;
-  const saved = usePoll<{ queries: Saved[] }>("/api/queries", 30000).data?.queries ?? [];
+  // MongoDB runs the builder's pipelines but has no SQL, so the SQL tab (and SQL-only saved queries) hide
+  const noSql = schema?.engine === "mongodb";
+  const tabs = noSql ? TABS.filter(([t]) => t !== "sql") : TABS;
+  const saved = (usePoll<{ queries: Saved[] }>("/api/queries", 30000).data?.queries ?? []).filter((q) => !noSql || q.spec);
   const initial = params.get("sql") ? "sql" : params.get("plan") ? "ask" : params.get("tab");
-  const [tab, setTabState] = useState<Tab>(TABS.some(([t]) => t === initial) ? initial as Tab : "ask");
+  const [picked, setTabState] = useState<Tab>(TABS.some(([t]) => t === initial) ? initial as Tab : "ask");
+  const tab: Tab = noSql && picked === "sql" ? "builder" : picked;
   const setTab = (t: Tab) => { setTabState(t); setParams((p) => { p.set("tab", t); return p; }, { replace: true }); };
-  const [spec, setSpec] = useState<Spec>(EMPTY);
+  const [spec, setSpec] = useState<Spec>(START);
   const [sql, setSql] = useState(params.get("sql") ?? "");
   const [name, setName] = useState("");
-  const [naming, setNaming] = useState(false);
   const build = useAction((s: Spec) => api<{ sql: string; result: QueryResult }>("/api/query/build", { method: "POST", json: s }));
   const run = useAction((q: string) => api<QueryResult>("/api/query", { method: "POST", json: { sql: q } }));
   const save = useAction(() => api("/api/queries", { method: "POST", json: { name, sql: tab === "builder" ? build.data?.sql : sql, spec: tab === "builder" ? spec : null } }));
@@ -252,6 +448,13 @@ export default function Query() {
   const error = tab === "builder" ? build.error : run.error;
   const currentSql = tab === "builder" ? build.data?.sql : sql;
   const key = JSON.stringify(spec);
+  // a result row or a line's chip becomes a filter (replacing one on the same field); "See lines" lists them
+  const drill: Drill = (add, showLines) => setSpec((s) => ({
+    ...s,
+    filters: [...s.filters.filter((f) => !add.some((a) => a.field === f.field)), ...add],
+    group_by: s.group_by.filter((g) => !add.some((a) => a.field === g)),
+    ...(showLines ? { measure: { fn: "lines" }, over_time: false } : {}),
+  }));
   // the builder runs itself a moment after each change, so a new user sees an answer at once
   useEffect(() => {
     if (tab !== "builder" || spec.filters.some((f) => !f.value)) return;
@@ -259,42 +462,20 @@ export default function Query() {
     return () => clearTimeout(t);
   }, [key, tab]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const insert = (text: string) => { setTab("sql"); setSql((s) => (s ? `${s}${s.endsWith(" ") || s.endsWith("\n") ? "" : " "}${text}` : `SELECT ${text}\nFROM ${schema?.table ?? "iot_logs"}`)); };
+  const saveIt = (done: () => void) => save.mutate(undefined, { onSuccess: () => { setName(""); done(); } });
   const load = (q: Saved) => {
     if (q.spec) { setTab("builder"); setSpec(q.spec); } else { setTab("sql"); setSql(q.sql); run.mutate(q.sql); }
   };
 
   return (
     <>
-      <PageHead title="Query" sub="Ask a question in plain words, build one from a sentence, or write SQL. Everything is read-only." />
-      <div className={tab === "sql" ? "query-layout" : ""}>
-        {tab === "sql" && (
-          <aside className="query-side">
-            <Card title={<>Table <code>{schema?.table ?? "…"}</code></>} hint="Click to insert">
-              <ul className="side-list schema">
-                {schema?.columns.map((c) => (
-                  <li key={c.name}><button type="button" title={c.about} onClick={() => insert(c.name === "level (computed)" ? "level" : c.name)}>
-                    <code>{c.name}</code><span className="muted small">{c.about}</span></button></li>
-                ))}
-              </ul>
-              {schema && schema.fields.length > 0 && (
-                <>
-                  <h3 style={{ marginTop: 10 }}>Extracted fields</h3>
-                  <div className="row" style={{ gap: 4 }}>
-                    {schema.fields.map((f) => <button key={f} type="button" className="chip-btn" title={schema.payload_access.replace("name", f)}
-                      onClick={() => insert(schema.payload_access.replace("name", f))}>@{f}</button>)}
-                  </div>
-                </>
-              )}
-            </Card>
-          </aside>
-        )}
-
+      <PageHead title="Query" sub={`Ask a question in plain words${noSql ? " or" : ","} build one step by step${noSql ? "" : ", or write SQL"}. Everything is read-only.`} />
+      <div>
         <div className="stack">
           <Card>
             <div className="query-tabs">
               <div className="tabs" role="tablist">
-                {TABS.map(([t, text]) => (
+                {tabs.map(([t, text]) => (
                   <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{text}</button>
                 ))}
               </div>
@@ -310,39 +491,24 @@ export default function Query() {
                 </Pop>
               )}
             </div>
-            {tab === "builder" && <Builder spec={spec} setSpec={setSpec} schema={schema} running={build.isPending} onRun={() => build.mutate(spec)} />}
+            {tab === "builder" && <Builder spec={spec} setSpec={setSpec} schema={schema} />}
             {tab === "ask" && <AskPanel initialPlan={params.get("plan") ?? undefined} />}
-            {tab === "sql" && (
-              <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); run.mutate(sql); }}>
-                <textarea rows={8} className="mono" value={sql} spellCheck={false} aria-label="SQL" placeholder={`SELECT service, count() FROM ${schema?.table ?? "iot_logs"} GROUP BY service`}
-                  onChange={(e) => setSql(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run.mutate(sql); }} />
-                <div className="row">
-                  <button className="btn primary" disabled={!sql.trim() || run.isPending}>{run.isPending ? "Running…" : "Run"}</button>
-                  <span className="muted small">Ctrl/⌘ + Enter · at most 500 rows</span>
-                </div>
-              </form>
-            )}
-            {currentSql && tab === "builder" && (
-              <details className="gen-sql"><summary className="small">View SQL</summary>
-                <pre className="code-block mono small">{currentSql}</pre>
-                <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>
-              </details>
-            )}
+            {tab === "sql" && <SqlEditor sql={sql} setSql={setSql} schema={schema} onRun={(q) => run.mutate(q)} running={run.isPending} />}
             {error && tab !== "ask" && <div className="callout bad" style={{ marginTop: 12 }}>{error.message}</div>}
-            {result && currentSql && (
-              <div className="row" style={{ marginTop: 12 }}>
-                {naming ? (
-                  <form className="row" onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => { setNaming(false); setName(""); } }); }}>
-                    <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Query name" />
-                    <button className="btn small primary" disabled={!name.trim() || save.isPending}>Save</button>
-                    <button type="button" className="btn small ghost" onClick={() => setNaming(false)}>Cancel</button>
-                  </form>
-                ) : <button className="btn small" onClick={() => setNaming(true)}>Save query</button>}
-                {save.error && <span className="error-text">{save.error.message}</span>}
-              </div>
-            )}
           </Card>
-          {result && <ResultView r={result} />}
+          {tab === "builder" && (result || build.isPending) && (
+            <ResultView r={result} ran={build.variables} onDrill={drill} busy={build.isPending} actions={<>
+              {currentSql && <Pop className="ghost" label={noSql ? "View query" : "View SQL"} title="The query this runs">{() => (
+                <div className="stack qb-code" style={{ gap: 8 }}>
+                  <pre className="code-block mono small">{currentSql}</pre>
+                  {!noSql && <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>}
+                </div>)}
+              </Pop>}
+              {currentSql && <SavePop name={name} setName={setName} onSave={saveIt} pending={save.isPending} error={save.error} />}
+            </>} />
+          )}
+          {tab === "sql" && result && <ResultView r={result} busy={run.isPending}
+            actions={sql.trim() && <SavePop name={name} setName={setName} onSave={saveIt} pending={save.isPending} error={save.error} />} />}
         </div>
       </div>
     </>

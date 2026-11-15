@@ -1,5 +1,5 @@
 // Toasts (and, opted in, desktop notifications) for a new anomaly incident, a firing metric alert,
-// new maintenance to-dos and jobs that are queued, finish or fail; alerts and maintenance also
+// new maintenance to-dos, templates linked to an existing one and jobs that are queued, finish or fail; all but queued jobs also
 // chime unless muted. Plus the counts the sidebar shows. Only what changes after the page
 // loaded is announced, never the backlog.
 import { useEffect, useRef, useState } from "react";
@@ -23,6 +23,8 @@ let audio: AudioContext | null = null;
 function chime() {
   try {
     audio ??= new AudioContext();
+    // made from a poll, not a click, so it can start suspended; resuming works once the page has had one
+    if (audio.state === "suspended") void audio.resume();
     const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
     osc.frequency.setValueAtTime(880, t);
     osc.frequency.setValueAtTime(660, t + 0.12);
@@ -40,8 +42,9 @@ function desktopOn() {
   catch { return false; }
 }
 
-/** `todo`: the Maintenance count, undefined until the overview has loaded. */
-export function useNotifications(todo?: number) {
+/** `todo`: the Maintenance count and `links`: templates the learner linked to an existing one,
+ * both undefined until the overview has loaded. */
+export function useNotifications(todo?: number, links?: number) {
   const incidents = usePoll<{ incidents: Incident[] }>("/api/incidents", 5000).data?.incidents;
   const jobs = usePoll<{ jobs: Job[] }>("/api/jobs", 3000).data?.jobs;
   const metricAlerts = usePoll<{ alerts: MetricAlert[] }>("/api/system/alerts", 10000).data?.alerts;
@@ -49,6 +52,7 @@ export function useNotifications(todo?: number) {
   const seenIncidents = useRef<Set<string> | null>(null);
   const seenJobs = useRef<Map<string, Job["status"]> | null>(null);
   const lastTodo = useRef<number | null>(null);
+  const lastLinks = useRef<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const go = useNavigate();
 
@@ -96,6 +100,16 @@ export function useNotifications(todo?: number) {
   }, [todo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (links === undefined) return;
+    const before = lastLinks.current;
+    lastLinks.current = links;
+    if (before === null || links <= before) return;
+    const n = links - before;
+    push({ id: "template-linked", title: n === 1 ? "Template linked" : `${n} templates linked`, tone: "info", to: "/templates",
+      body: `${n === 1 ? "A new log template was" : `${n} new log templates were`} recognised as an existing one; models count those lines as the old template.` }, true, true);
+  }, [links]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!jobs) return;
     if (seenJobs.current === null) { seenJobs.current = new Map(jobs.map((j) => [j.id, j.status])); return; }
     for (const j of jobs) {
@@ -106,9 +120,9 @@ export function useNotifications(todo?: number) {
       if (before === undefined && (j.status === "queued" || j.status === "running"))
         push({ id: `job-${j.id}`, title: "Job queued", body: what, to: "/jobs", tone: "info" }, false);
       else if (j.status === "done")
-        push({ id: `job-${j.id}`, title: "Job finished", body: `${what}: ${j.message}`, to: "/jobs", tone: "good" }, true);
+        push({ id: `job-${j.id}`, title: "Job finished", body: `${what}: ${j.message}`, to: "/jobs", tone: "good" }, true, true);
       else if (j.status === "failed")
-        push({ id: `job-${j.id}`, title: "Job failed", body: `${what}: ${j.error ?? ""}`, to: "/jobs", tone: "bad" }, true);
+        push({ id: `job-${j.id}`, title: "Job failed", body: `${what}: ${j.error ?? ""}`, to: "/jobs", tone: "bad" }, true, true);
     }
   }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -153,12 +167,12 @@ export function DesktopToggle() {
     <div className="stack" style={{ gap: 4 }}>
       <Switch checked={on} onChange={toggle} disabled={denied} label="Desktop notifications" />
       <span className="muted small">{denied ? "Blocked in this browser's site settings: allow notifications for this site there, then come back."
-        : "Anomalies, metric alerts, maintenance and finished or failed jobs, while this tab is in the background."}</span>
+        : "Anomalies, metric alerts, maintenance, linked templates and finished or failed jobs, while this tab is in the background."}</span>
     </div>
   );
 }
 
-/** Mute the chime that plays with anomalies, metric alerts and new maintenance. */
+/** Mute the chime that plays with anomalies, metric alerts, new maintenance and finished jobs. */
 export function SoundToggle() {
   const [on, setOn] = useState(soundOn);
   const toggle = (next: boolean) => {
@@ -169,7 +183,7 @@ export function SoundToggle() {
   return (
     <div className="stack" style={{ gap: 4 }}>
       <Switch checked={on} onChange={toggle} label="Alert sound" />
-      <span className="muted small">A short chime with anomalies, metric alerts and new maintenance items.</span>
+      <span className="muted small">A short chime with anomalies, metric alerts, new maintenance items, linked templates and finished or failed jobs.</span>
     </div>
   );
 }

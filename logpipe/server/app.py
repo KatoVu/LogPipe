@@ -317,6 +317,12 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
             "agents_online": sum(a["online"] for a in agents),
             "sources": len(server.sources),
             "templates": len(snap.templates),
+            # new templates the online learner linked to an existing one (the UI announces new ones)
+            "auto_links": sum(
+                t.alias_of is not None
+                and server.tmeta.get(t.template_id, {}).get("linked_by") != "you"
+                for t in snap.templates.values()
+            ),
             "registry_version": snap.version,
             "warnings": dict(Counter(w["kind"] for w in warnings)),
             "review": len(server.batches()),
@@ -632,6 +638,10 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
         return server.set_incident(
             incident_id, status, str(body.get("note") or ""), caller(request)
         )
+
+    @app.post("/api/incidents/{incident_id}/comments")
+    def comment_incident(request: Request, incident_id: str, body: Annotated[dict, Body()]) -> dict:
+        return server.comment_incident(incident_id, str(body.get("text") or ""), caller(request))
 
     @app.post("/api/incidents/{incident_id}/explain", status_code=202)
     def explain_incident(incident_id: str, body: Annotated[dict | None, Body()] = None) -> dict:

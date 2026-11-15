@@ -193,7 +193,11 @@ export interface IncidentEvent {
   expected: { template_id: number; template: string; words: string }[];
 }
 
+/** A status change or a comment on an incident, oldest first; ``by`` is an AI assistant key's name, null for a person. */
+export interface IncidentActivity { kind: "status" | "comment"; status?: IncidentStatus; text: string; by: string | null; at: string }
+
 export interface IncidentDetail extends Incident {
+  activity: IncidentActivity[];
   events: IncidentEvent[];
   around: { timestamp: string; host: string; service: string; message: string; level: string }[];
   model_current: boolean;
@@ -209,6 +213,7 @@ export interface Overview {
   agents_online: number;
   sources: number;
   templates: number;
+  auto_links: number;
   registry_version: number;
   warnings: Record<string, number>;
   review: number;
@@ -293,7 +298,9 @@ export interface Stream {
   trained_at?: string;
   model_version?: string;
   windows?: number;
-  miss_threshold?: number;
+  miss_threshold?: number | null;
+  /** false: the lines' order is no better than guessing (e.g. an access log), so no sequence alerts */
+  sequence_alerts?: boolean;
   model_error?: string | null;
   waiting?: boolean;
   data?: Readiness;

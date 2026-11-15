@@ -20,6 +20,12 @@ BINS = np.linspace(0.0, 1.0, 11)  # miss ratio deciles
 EPS = 1e-4
 
 
+def sequence_signal(misses: list[float], chance: float) -> bool:
+    """Whether a stream's order is learnable: its typical held-out window misses under 40% of what
+    guessing would. With no held-out windows, assume it is."""
+    return not misses or chance <= 0 or float(np.median(misses)) < 0.4 * chance
+
+
 def histogram(values) -> list[float]:
     counts, _ = np.histogram(np.clip(np.asarray(values, dtype=float), 0, 1), bins=BINS)
     total = counts.sum()

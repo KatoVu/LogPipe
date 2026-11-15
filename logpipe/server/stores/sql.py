@@ -142,6 +142,14 @@ class SqlCompiler(Compiler):
     def build(self, spec: dict) -> str:
         where = self.time_where(spec) + self.filter_where(spec.get("filters"))
         fn, target, label = measure_of(spec)
+        limit = max(1, min(int(spec.get("limit") or 100), get_settings().server.max_builder_rows))
+        if fn == "lines":  # group_by and over_time don't apply to lines
+            return (
+                f"SELECT timestamp, device_id AS host, service, {self.columns['level']} AS level, "
+                f"raw_message AS message, {self.payload_json()} AS payload\nFROM {self.source}\nWHERE "
+                + "\n  AND ".join(where)
+                + f"\nORDER BY {self.time_col()} DESC\nLIMIT {limit}"
+            )
         value = (
             self.count
             if fn == "count"
@@ -155,7 +163,6 @@ class SqlCompiler(Compiler):
             select.append(f"{self.field(str(g))} AS {alias(str(g), i)}")
             group.append(alias(str(g), i))
         select.append(f"{value} AS {label}")
-        limit = max(1, min(int(spec.get("limit") or 100), get_settings().server.max_builder_rows))
         sql = f"SELECT {', '.join(select)}\nFROM {self.source}\nWHERE " + "\n  AND ".join(where)
         if group:
             sql += f"\nGROUP BY {', '.join(group)}"

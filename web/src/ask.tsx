@@ -1,9 +1,11 @@
-// Ask: a question becomes a plan of read-only queries; each round is shown (what it reads and the
-// exact SQL or pipeline) and runs only once approved, unless approval is switched off in Settings.
+// Ask, as a chat: a question becomes a plan of read-only queries. You approve its first round once
+// (unless approval is off in Settings); the follow-ups run on their own. The working (what it read,
+// the exact SQL, the LLM's prompts) folds under "How I got this".
 // The answer cites the lines it rests on (L3, T12): hover a cite to light its line up, click to go to it.
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, useAction, usePoll } from "./api";
+import { AutoChart, LEVELS, Timeline } from "./charts";
 import { Card, CopyBlock, Empty, Switch, TimeAgo, time } from "./ui";
 
 export interface AskQuery {
@@ -113,33 +115,89 @@ function Steps({ plan }: { plan: AskPlan }) {
   );
 }
 
-/** One round: what each read is for and the exact text that will run. Pending ones can be ticked. */
-function RoundView({ plan, round, waiting }: { plan: AskPlan; round: AskPlan["rounds"][number]; waiting: boolean }) {
+/** The one approval a question needs: what it will read, then Run. The follow-ups it leads to run
+ *  without asking again (the server holds that, see logpipe.ask.service). */
+function Approve({ plan, round, onEdit }: { plan: AskPlan; round: AskPlan["rounds"][number]; onEdit?: () => void }) {
   const [picked, setPicked] = useState<Set<string>>(() => new Set(round.queries.map((q) => q.id)));
-  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState(false);
   const approve = useAction(() => api(`/api/ask/${plan.id}/approve`, { method: "POST", json: { queries: [...picked] } }));
   const reject = useAction(() => api(`/api/ask/${plan.id}/reject`, { method: "POST" }));
-  const running = ["approved", "running"].includes(plan.status) && round.queries.some((q) => q.status === "approved");
-  const done = round.queries.filter((q) => q.status === "done").length;
-  const flip = (set: Set<string>, id: string) => { const s = new Set(set); if (s.has(id)) s.delete(id); else s.add(id); return s; };
-  const body = (
-    <>
+  const n = round.queries.length;
+  const flip = (id: string) => { const s = new Set(picked); if (s.has(id)) s.delete(id); else s.add(id); setPicked(s); };
+  return (
+    <div className="ask-approve" role="region" aria-label="Approve these queries">
+      <SpecChips spec={plan.spec} via={plan.via} />
+      <p className="ask-approve-text">
+        I'll run <strong>{picked.size === n ? n : `${picked.size} of ${n}`} read-only quer{n === 1 ? "y" : "ies"}</strong>
+        {round.purpose ? <> to {round.purpose.charAt(0).toLowerCase() + round.purpose.slice(1)}</> : null}, plus any follow-ups the answer needs. You won't be asked again for this question.
+      </p>
+      <div className="row">
+        <button className="btn primary" disabled={!picked.size || approve.isPending} onClick={() => approve.mutate()}>
+          {approve.isPending ? <><span className="spin" aria-hidden="true" />Starting…</> : "Run"}</button>
+        <button className="btn ghost" disabled={reject.isPending} onClick={() => reject.mutate()}>Stop</button>
+        <button type="button" className="btn ghost" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Hide queries" : "Show queries"}</button>
+        {onEdit && <button type="button" className="btn ghost" onClick={onEdit}>Change what it searches</button>}
+        {plan.expires_at && <span className="muted small"><Until iso={plan.expires_at} /></span>}
+      </div>
+      {open && (
+        <ul className="ask-queries">
+          {round.queries.map((q) => (
+            <li key={q.id}>
+              <label className="ask-q-head">
+                <input type="checkbox" checked={picked.has(q.id)} onChange={() => flip(q.id)} />
+                <span className="grow"><span className="ask-q-title">{q.title}</span><span className="muted small"> · {q.why}</span></span>
+                <span className="badge">{q.engine === "local" ? "server state" : q.engine}</span>
+              </label>
+              <div className="ask-q-code"><CopyBlock text={q.compiled} /></div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {(approve.error || reject.error) && <div className="error-text small">{(approve.error ?? reject.error)!.message}</div>}
+    </div>
+  );
+}
+
+/** One line while it works: which LLM call or which round, with a clock. */
+function Working({ plan }: { plan: AskPlan }) {
+  const llm = plan.llm_steps?.find((s) => s.status === "running");
+  const round = plan.rounds.at(-1);
+  const done = round?.queries.filter((q) => q.status === "done").length ?? 0;
+  const live = round?.queries.filter((q) => q.status !== "rejected").length ?? 0;
+  return (
+    <div className="ask-working" aria-live="polite">
+      <span className="spin" aria-hidden="true" />
+      <span className="grow">{llm ? <><strong>{llm.step}…</strong> <Waiting since={llm.started_at} limit={llm.timeout_seconds} /></>
+        : <><strong>{round && round.n > 1 ? "Following up" : "Reading the logs"}…</strong> <span className="muted">{round?.purpose}{live ? ` · ${done} of ${live} done` : ""}</span></>}</span>
+      <div className="ask-progress" aria-hidden="true" />
+    </div>
+  );
+}
+
+/** A round that ran, inside "How I got this": what each read was for, and the exact text. */
+function RoundView({ round }: { round: AskPlan["rounds"][number] }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const flip = (id: string) => { const s = new Set(open); if (s.has(id)) s.delete(id); else s.add(id); setOpen(s); };
+  return (
+    <section className="ask-round">
+      <div className="ask-round-head">
+        <span className="ask-round-n">Round {round.n}</span>
+        <span className="grow">{round.purpose}</span>
+        <span className="muted small">{summarize(round.queries)}</span>
+      </div>
       <ul className="ask-queries">
         {round.queries.map((q) => (
           <li key={q.id} className={`q-${q.status}`}>
             <div className="ask-q-head">
-              {waiting ? <input type="checkbox" aria-label={`Run ${q.title}`} checked={picked.has(q.id)} onChange={() => setPicked(flip(picked, q.id))} />
-                : <span className={`ask-q-dot q-${q.status}`} aria-hidden="true" />}
+              <span className={`ask-q-dot q-${q.status}`} aria-hidden="true" />
               <div className="grow">
                 <div className="ask-q-title">{q.title}</div>
                 <div className="muted small">{q.why}</div>
               </div>
               <span className="ask-q-meta">
                 {q.result_summary && <span className="small">{q.result_summary}</span>}
-                <span className="badge" title={q.engine === "local" ? "Reads the server's own state, no log data" : "Read-only, on the log store"}>
-                  {q.engine === "local" ? "server state" : q.engine}</span>
                 <span className={`badge ${STATUS_BADGE[q.status]}`}>{QUERY_STATUS[q.status]}</span>
-                <button type="button" className="btn small ghost" aria-expanded={open.has(q.id)} onClick={() => setOpen(flip(open, q.id))}>
+                <button type="button" className="btn small ghost" aria-expanded={open.has(q.id)} onClick={() => flip(q.id)}>
                   {open.has(q.id) ? "Hide query" : "Show query"}</button>
               </span>
             </div>
@@ -148,32 +206,6 @@ function RoundView({ plan, round, waiting }: { plan: AskPlan; round: AskPlan["ro
           </li>
         ))}
       </ul>
-      {waiting && (
-        <div className="ask-turn" role="region" aria-label="Approve this round">
-          <div className="grow">
-            <strong>Your turn.</strong> {picked.size === round.queries.length ? `Run these ${round.queries.length} queries?` : `Run ${picked.size} of ${round.queries.length}? The others are skipped.`}
-            <div className="muted small">All read-only. Open a query to check exactly what runs.
-              {plan.expires_at && <> <Until iso={plan.expires_at} /></>}</div>
-          </div>
-          <button className="btn ghost" disabled={reject.isPending} onClick={() => reject.mutate()}>Stop here</button>
-          <button className="btn primary" disabled={!picked.size || approve.isPending} onClick={() => approve.mutate()}>
-            {approve.isPending ? <><span className="spin" aria-hidden="true" />Starting…</> : picked.size === round.queries.length ? "Run all" : `Run ${picked.size}`}</button>
-          {(approve.error || reject.error) && <div className="error-text small" style={{ flexBasis: "100%" }}>{(approve.error ?? reject.error)!.message}</div>}
-        </div>
-      )}
-    </>
-  );
-  const head = (
-    <span className="ask-round-head">
-      <span className="ask-round-n">Round {round.n}</span>
-      <span className="grow">{round.purpose}</span>
-      <span className="muted small">{running ? `running, ${done} of ${round.queries.length} done` : waiting ? "waiting for you" : summarize(round.queries)}</span>
-    </span>
-  );
-  return (
-    <section className={`ask-round${waiting ? " is-waiting" : ""}${running ? " is-running" : ""}`}>
-      {waiting || running ? <>{head}{running && <div className="ask-progress" aria-hidden="true" />}{body}</>
-        : <details><summary>{head}</summary>{body}</details>}
     </section>
   );
 }
@@ -512,126 +544,182 @@ function Ranking({ candidates }: { candidates: Candidate[] }) {
   );
 }
 
+/** When the lines happened, stacked by level: the shape of the trouble before the details. */
+function LinesChart({ lines }: { lines: { timestamp: string; level?: string | null }[] }) {
+  const ts = lines.map((l) => Date.parse(l.timestamp)).filter((t) => !Number.isNaN(t));
+  if (ts.length < 3) return null;
+  const lo = Math.min(...ts), n = 24, step = Math.max(1000, Math.ceil((Math.max(...ts) - lo + 1) / n));
+  const points = Array.from({ length: n }, (_, i) => ({ t: lo + i * step }) as { t: number } & Record<string, number>);
+  for (const l of lines) {
+    const t = Date.parse(l.timestamp);
+    if (Number.isNaN(t)) continue;
+    const p = points[Math.min(n - 1, Math.floor((t - lo) / step))];
+    const k = l.level && LEVELS.some((x) => x.key === l.level) ? l.level : "info";
+    p[k] = (p[k] ?? 0) + 1;
+  }
+  return <Timeline data={{ step: Math.round(step / 1000), points }} series={LEVELS.filter((x) => lines.some((l) => (l.level ?? "info") === x.key))} height={110} />;
+}
+
 export function ResultBody({ r }: { r: AskResult }) {
-  if (r.kind === "general") return <div className="ask-general"><p>{String(r.answer)}</p><span className="badge">{r.note}</span></div>;
-  if (r.kind === "clarify") return <div className="callout warn"><div><strong>I need more to go on.</strong> {r.message}{r.note && <div className="muted small">{r.note}</div>}</div></div>;
+  if (r.kind === "general") return <div className="ask-general"><p>{String(r.answer)}</p>{r.note && <span className="muted small">{r.note}</span>}</div>;
+  if (r.kind === "clarify") return <div className="ask-general"><p>{r.message}</p>{r.note && <span className="muted small">{r.note}</span>}<p className="muted small">Ask again with a service, a time or a word from the line.</p></div>;
   if (r.kind === "lines") return (
     <div className="stack" style={{ gap: 10 }}>
-      {r.note && <p className="muted small" style={{ margin: 0 }}>{r.note}</p>}
-      {r.lines?.length ? <LinesList lines={r.lines.map((l, i) => ({ key: l.log_id ?? String(i), ...l }))} /> : <Empty title="No matching lines">Try a longer time range or fewer filters.</Empty>}
+      <p className="ask-general-lead">{r.lines?.length ? <>Found <strong>{r.lines.length} line{r.lines.length === 1 ? "" : "s"}</strong>{levelCounts(r.lines)}.</> : "Nothing matched."} {r.note && <span className="muted small">{r.note}</span>}</p>
+      {r.lines?.length ? <><LinesChart lines={r.lines} /><LinesList lines={r.lines.map((l, i) => ({ key: l.log_id ?? String(i), ...l }))} /></>
+        : <p className="muted small" style={{ margin: 0 }}>Try a longer time range or fewer filters.</p>}
       {!!r.templates?.length && <><h3>When each kind of line occurred</h3><Table columns={["template", "service", "lines", "first", "last"]}
         rows={r.templates.map((t) => [`T${t.template_id} ${t.text.slice(0, 80)}`, t.service, t.count, time(t.first), time(t.last)])} /></>}
     </div>
   );
-  if (r.kind === "table") return r.rows?.length ? <Table columns={r.columns ?? []} rows={r.rows} /> : <Empty title="No rows">Nothing matched in that range.</Empty>;
+  if (r.kind === "table") return r.rows?.length ? (
+    <div className="stack" style={{ gap: 10 }}>
+      <p className="ask-general-lead">{r.rows.length} row{r.rows.length === 1 ? "" : "s"}{r.note ? <span className="muted small"> · {r.note}</span> : null}</p>
+      <AutoChart columns={r.columns ?? []} rows={r.rows} />
+      <Table columns={r.columns ?? []} rows={r.rows} />
+    </div>) : <p className="muted" style={{ margin: 0 }}>Nothing matched in that range.</p>;
   return <ReportView r={r} />;
 }
 
+function levelCounts(lines: { level: string | null }[]) {
+  const by = LEVELS.map((l) => [l.key, lines.filter((x) => x.level === l.key).length] as const).filter(([, n]) => n);
+  return by.length > 1 ? `: ${by.map(([k, n]) => `${n} ${k}`).join(", ")}` : "";
+}
+
 const DONE_TEXT: Partial<Record<AskPlan["status"], ReactNode>> = {
-  rejected: "You stopped this plan; nothing else ran.",
-  expired: "This plan expired before it was approved. Ask again to get fresh queries.",
+  rejected: "Stopped. Nothing ran.",
+  expired: "This expired before it was approved. Ask again to get fresh queries.",
 };
 
-export function PlanView({ id }: { id: string }) {
+/** One question's answer: the approval if it waits, a status line while it works, the answer, and
+ *  the engine's working folded under "How I got this". ``chat`` adds the question as your bubble. */
+export function PlanView({ id, chat }: { id: string; chat?: boolean }) {
   const { data: plan, error } = usePoll<AskPlan>(`/api/ask/${id}`, 1500);
   const [editing, setEditing] = useState(false);
   if (!plan) return error ? <div className="error-text">{error.message}</div> : <div className="ask-skeleton" aria-busy="true" />;
-  const editable = plan.status === "waiting_approval" && plan.rounds.length === 1;
-  const last = plan.rounds.length - 1;
-  return (
-    <article className="ask-plan">
-      <header className="ask-plan-head">
-        <h2 className="ask-question">{plan.question}</h2>
-        <div className="spread">
-          <SpecChips spec={plan.spec} via={plan.via} />
-          {editable && !editing && <button type="button" className="btn small ghost" onClick={() => setEditing(true)}>Edit what it searches</button>}
-        </div>
-        {editing && <SpecEditor plan={plan} onClose={() => setEditing(false)} />}
-        {plan.notes.length > 0 && <p className="muted small" style={{ margin: 0 }}>{plan.notes.join(" · ")}</p>}
-        {plan.rounds.length > 0 && <Steps plan={plan} />}
-      </header>
-      {!!plan.llm_steps?.length && <AiActivity steps={plan.llm_steps} />}
-      {plan.rounds.length > 0 && (
-        <div className="ask-rounds">
-          {plan.rounds.map((r, i) => <RoundView key={`${r.n}-${plan.status}`} plan={plan} round={r} waiting={i === last && plan.status === "waiting_approval"} />)}
-        </div>
-      )}
-      {DONE_TEXT[plan.status] && <div className="callout"><div>{DONE_TEXT[plan.status]}</div></div>}
+  const waiting = plan.status === "waiting_approval";
+  const ran = plan.rounds.filter((r) => r.queries.some((q) => q.status !== "pending"));
+  const body = (
+    <div className="ask-plan">
+      {waiting && !editing && plan.rounds.length > 0 && (
+        <Approve key={plan.rounds.at(-1)!.n} plan={plan} round={plan.rounds.at(-1)!} onEdit={plan.rounds.length === 1 ? () => setEditing(true) : undefined} />)}
+      {editing && <SpecEditor plan={plan} onClose={() => setEditing(false)} />}
+      {["approved", "running"].includes(plan.status) && <Working plan={plan} />}
+      {DONE_TEXT[plan.status] && <p className="muted" style={{ margin: 0 }}>{DONE_TEXT[plan.status]}</p>}
       {plan.status === "failed" && (
-        <div className="callout bad" role="alert"><div><strong>This run stopped.</strong> {plan.error ?? "A query failed: see the round above."}
-          <div className="muted small">Nothing else will run for it. Ask again to start over.</div></div></div>
+        <div className="callout bad" role="alert"><div><strong>This stopped.</strong> {plan.error ?? "A query failed; see How I got this."}
+          <div className="muted small">Ask again to start over.</div></div></div>
       )}
       {plan.result && <ResultBody r={plan.result} />}
-    </article>
+      {(ran.length > 0 || !!plan.llm_steps?.length || !waiting) && (
+        <details className="ask-how">
+          <summary>How I got this</summary>
+          <div className="stack" style={{ gap: 10 }}>
+            <SpecChips spec={plan.spec} via={plan.via} />
+            {plan.notes.length > 0 && <p className="muted small" style={{ margin: 0 }}>{plan.notes.join(" · ")}</p>}
+            {plan.rounds.length > 0 && <Steps plan={plan} />}
+            {!!plan.llm_steps?.length && <AiActivity steps={plan.llm_steps} />}
+            {ran.map((r) => <RoundView key={`${r.n}-${plan.status}`} round={r} />)}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+  if (!chat) return body;
+  return (
+    <div className="turn">
+      <div className="msg-me">{plan.question}</div>
+      <div className="msg-ai"><span className="msg-mark" aria-hidden="true">AI</span><div className="grow">{body}</div></div>
+    </div>
   );
 }
 
-/** While the question is being read (by rules, or by the LLM, which can take a while through a
- *  web chat): the question, a running clock and what happens next. */
-function Pending({ question, what = "Reading your question", limit }: { question: string; what?: string; limit?: number }) {
+/** While the question is being read (by rules, or by the LLM, which can take a while). */
+function Pending({ what = "Reading your question", limit }: { what?: string; limit?: number }) {
   const [since] = useState(() => new Date().toISOString());
   return (
-    <article className="ask-plan ask-pending" aria-busy="true" aria-live="polite">
-      <h2 className="ask-question">{question}</h2>
-      <div className="ask-ai is-running ask-ai-static">
-        <span className="spin" aria-hidden="true" />
-        <span className="grow"><strong>{what}…</strong> <Waiting since={since} limit={limit} /></span>
-      </div>
-      <p className="muted small" style={{ margin: 0 }}>Plain questions are read by rules in a moment. Anything else goes to the LLM, which can take up to a minute;
-        then you see the queries it plans before any of them runs.</p>
-    </article>
+    <div className="ask-working" aria-busy="true" aria-live="polite">
+      <span className="spin" aria-hidden="true" />
+      <span className="grow"><strong>{what}…</strong> <Waiting since={since} limit={limit} /></span>
+    </div>
   );
 }
 
 interface Recent { id: string; question: string; status: AskPlan["status"]; created_at: string; intent: string }
 
+const DOT: Partial<Record<AskPlan["status"], string>> = { done: "done", waiting_approval: "pending", failed: "failed", approved: "approved", running: "approved" };
+
 export function AskPanel({ initialPlan }: { initialPlan?: string }) {
   const [question, setQuestion] = useState("");
-  const [current, setCurrent] = useState<string | undefined>(initialPlan);
+  const [thread, setThread] = useState<string[]>(initialPlan ? [initialPlan] : []);
   const recent = usePoll<{ plans: Recent[]; require_approval: boolean; llm_timeout_seconds: number }>("/api/ask", 10000).data;
   const serverRequires = recent?.require_approval ?? true;
   const [mine, setMine] = useState(true);  // only matters when the server lets queries run unapproved
   const ask = useAction((q: string) => api<AskPlan>("/api/ask", {
     method: "POST", json: { question: q, require_approval: serverRequires || mine, tz_offset: -new Date().getTimezoneOffset() } }));
-  useEffect(() => { document.getElementById("ask-q")?.focus(); }, []);
-  const submit = (q: string) => { setQuestion(q); ask.mutate(q, { onSuccess: (p) => setCurrent(p.id) }); };
+  const input = useRef<HTMLTextAreaElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [thread.length, ask.isPending]);
+  const submit = (q: string) => {
+    if (!q.trim() || ask.isPending) return;
+    setQuestion("");
+    ask.mutate(q.trim(), { onSuccess: (p) => setThread((t) => [...t, p.id]), onError: () => setQuestion(q) });
+  };
+  const fresh = () => { setThread([]); input.current?.focus(); };
   return (
-    <div className="ask">
-      <form className="ask-composer" onSubmit={(e) => { e.preventDefault(); if (question.trim()) submit(question); }}>
-        <div className="ask-input">
-          <input id="ask-q" type="search" value={question} onChange={(e) => setQuestion(e.target.value)} autoComplete="off"
-            placeholder="Ask about your logs: why did checkout fail around 14:05?" aria-label="Question" />
-          <button className="btn primary" disabled={!question.trim() || ask.isPending} aria-busy={ask.isPending}>
-            {ask.isPending ? <><span className="spin" aria-hidden="true" />Reading…</> : "Ask"}</button>
-        </div>
-        <div className="spread">
-          <Switch checked={serverRequires || mine} disabled={serverRequires} onChange={setMine} label="Approve each query before it runs"
-            title={serverRequires ? "Required by the server (Settings → Ask)" : "The server lets queries run unapproved; keep this on to review them anyway"} />
-          {serverRequires && <span className="muted small">Required in <Link to="/settings#ask">Settings</Link>. Every query is read-only.</span>}
-        </div>
-        {ask.error && <div className="callout warn"><div>{ask.error.message}</div></div>}
-      </form>
-      {ask.isPending && <Pending question={ask.variables ?? question} limit={recent?.llm_timeout_seconds} />}
-      {!current && !ask.isPending && (
-        <div className="ask-empty">
-          <p className="muted small" style={{ margin: 0 }}>Plain questions are read by rules. Anything else goes to the LLM, which only fills in a search form, never SQL. Try:</p>
-          <div className="row">{EXAMPLES.map((q) => <button key={q} type="button" className="ask-example" onClick={() => submit(q)}>{q}</button>)}</div>
-        </div>
-      )}
-      {current && !ask.isPending && <PlanView key={current} id={current} />}
-      {!!recent?.plans.length && (
-        <details className="ask-recent" open={!current}>
-          <summary>Recent questions ({recent.plans.length})</summary>
-          <ul>{recent.plans.map((p) => (
-            <li key={p.id} className={p.id === current ? "on" : ""}>
-              <button type="button" onClick={() => setCurrent(p.id)}>
-                <span className={`ask-q-dot q-${p.status === "done" ? "done" : p.status === "waiting_approval" ? "pending" : ["failed"].includes(p.status) ? "failed" : p.status === "approved" || p.status === "running" ? "approved" : "rejected"}`} aria-hidden="true" />
-                <span className="grow">{p.question}</span>
-                <span className="muted small">{INTENT[p.intent] ?? p.intent} · <TimeAgo iso={p.created_at} /></span>
+    <div className="chat">
+      <aside className="chat-side" aria-label="Questions">
+        <button type="button" className="btn" onClick={fresh}>+ New question</button>
+        {!!recent?.plans.length && <>
+          <div className="chat-side-title">Recent</div>
+          <ul className="chat-recent">{recent.plans.map((p) => (
+            <li key={p.id} className={thread.includes(p.id) ? "on" : ""}>
+              <button type="button" onClick={() => setThread([p.id])} title={p.question}>
+                <span className={`ask-q-dot q-${DOT[p.status] ?? "rejected"}`} aria-hidden="true" />
+                <span className="grow">{p.question}<span className="muted small"><TimeAgo iso={p.created_at} /></span></span>
               </button>
             </li>))}</ul>
-        </details>
-      )}
+          <select className="chat-recent-select" aria-label="Recent questions" value="" onChange={(e) => e.target.value && setThread([e.target.value])}>
+            <option value="">Recent questions…</option>
+            {recent.plans.map((p) => <option key={p.id} value={p.id}>{p.question}</option>)}
+          </select>
+        </>}
+      </aside>
+      <section className="chat-main">
+        <div className="chat-thread">
+          {thread.length === 0 && !ask.isPending && (
+            <div className="chat-empty">
+              <h2>What do you want to know about your logs?</h2>
+              <p className="muted">Plain questions are read by rules in a moment; anything else goes to the LLM, which only fills in a search form, never SQL. Every query is read-only.</p>
+              <div className="chat-examples">{EXAMPLES.map((q) => <button key={q} type="button" className="ask-example" onClick={() => submit(q)}>{q}</button>)}</div>
+            </div>
+          )}
+          {thread.map((id) => <PlanView key={id} id={id} chat />)}
+          {ask.isPending && (
+            <div className="turn">
+              <div className="msg-me">{ask.variables}</div>
+              <div className="msg-ai"><span className="msg-mark" aria-hidden="true">AI</span><div className="grow"><Pending limit={recent?.llm_timeout_seconds} /></div></div>
+            </div>
+          )}
+          {ask.error && <div className="callout warn"><div>{ask.error.message}</div></div>}
+          <div ref={end} />
+        </div>
+        <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); submit(question); }}>
+          <div className="chat-input">
+            <textarea ref={input} id="ask-q" rows={1} value={question} onChange={(e) => setQuestion(e.target.value)} aria-label="Question"
+              placeholder="Ask about your logs: why did checkout fail around 14:05?"
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(question); } }} />
+            <button className="btn primary" disabled={!question.trim() || ask.isPending} aria-label="Ask">
+              {ask.isPending ? <span className="spin" aria-hidden="true" /> : "Ask"}</button>
+          </div>
+          <div className="chat-foot">
+            <Switch checked={serverRequires || mine} disabled={serverRequires} onChange={setMine} label="Approve before it runs"
+              title={serverRequires ? "Required by the server (Settings → Ask)" : "The server lets queries run unapproved; keep this on to review them anyway"} />
+            <span className="muted small">Once per question, read-only.{serverRequires && <> Set in <Link to="/settings#ask">Settings</Link>.</>} Shift+Enter for a new line.</span>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -647,9 +735,9 @@ export function IncidentAsk({ incident, plan }: { incident: string; plan: AskPla
     <Card title="What happened" actions={
       <button className="btn small primary" disabled={!!busy} aria-busy={start.isPending || !!working} onClick={() => start.mutate()}>
         {(start.isPending || working) && <span className="spin" aria-hidden="true" />}{label}</button>}>
-      {start.isPending ? <Pending question="What happened in this incident?" what="Planning the first queries" />
+      {start.isPending ? <Pending what="Planning the first queries" />
         : plan ? <PlanView id={plan.id} /> : (
-        <p className="muted" style={{ margin: 0 }}>Plans read-only queries around the incident's start for your approval, ranks what changed
+        <p className="muted" style={{ margin: 0 }}>Plans read-only queries around the incident's start, runs them once you approve, ranks what changed
           against the day before, and explains it citing the lines. <Link to="/query?tab=ask">Ask anything else</Link>.</p>)}
       {start.error && <div className="error-text small">{start.error.message}</div>}
     </Card>

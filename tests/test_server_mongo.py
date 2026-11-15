@@ -125,6 +125,16 @@ def test_server_on_mongodb(store, tmp_path):
         },
     ).json()
     assert hot["result"]["rows"] == [[1]]
+    found = client.post(
+        "/api/query/build",
+        json={
+            "minutes": 60,
+            "measure": {"fn": "lines"},
+            "filters": [{"field": "message", "op": "contains", "value": "disk"}],
+        },
+    ).json()["result"]
+    assert found["columns"][:5] == ["timestamp", "host", "service", "level", "message"]
+    assert len(found["rows"]) == 1 and "disk" in found["rows"][0][4]
     over = client.post("/api/query/build", json={"minutes": 60, "over_time": True}).json()
     assert (
         over["result"]["columns"] == ["time", "lines"]

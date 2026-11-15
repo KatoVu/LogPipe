@@ -44,7 +44,8 @@ FIELDS = {
     "template_id": "template the line matched",
     "message": "the raw line",
 }
-MEASURES = ("count", "count_distinct", "avg", "min", "max", "sum", "p95")
+# lines: the matching lines themselves (newest first) instead of a number
+MEASURES = ("lines", "count", "count_distinct", "avg", "min", "max", "sum", "p95")
 OPS = ("=", "!=", "contains", "not contains", ">", "<", "in")  # in: comma-separated values
 
 
@@ -181,7 +182,7 @@ def measure_of(spec: dict) -> tuple[str, str | None, str]:
     fn = measure.get("fn", "count")
     if fn not in MEASURES:
         raise ValueError(f"measure must be one of {', '.join(MEASURES)}")
-    if fn == "count":
+    if fn in ("count", "lines"):
         return fn, None, "lines"
     target = str(measure.get("field") or "")
     if not target:
