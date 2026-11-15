@@ -102,3 +102,30 @@ def test_showcase_saves_its_answers_as_the_next_defaults(tmp_path, monkeypatch):
     saved = json.loads(start.SAVED.read_text())
     assert saved["queue"] == "kafka" and saved["store"] == "clickhouse"
     assert saved["server_port"] == 9191
+
+
+def test_a_failed_do_can_be_retried_with_enter(monkeypatch):
+    """The draft act used to hang after its Enter-started job failed: Enter was spent."""
+    import io
+    import urllib.error
+
+    monkeypatch.setattr(showcase, "_enter_pressed", lambda _s: True)  # Enter, every time
+    monkeypatch.setattr(showcase, "_drop_typed_ahead", lambda: None)
+    monkeypatch.setattr(showcase.time, "sleep", lambda _s: None)
+    tour = showcase.Tour(api=None, url="", auto=False)  # type: ignore[arg-type]
+    tries, pending = [], []
+
+    def do():
+        tries.append(1)
+        if len(tries) == 1:  # refused by the server
+            raise urllib.error.HTTPError(
+                "u", 400, "Bad Request", None, io.BytesIO(b'{"detail": "no"}')
+            )
+        pending.append("draft job failed: the LLM is down" if len(tries) == 2 else "ok")
+
+    def steps():
+        out, pending[:] = list(pending), []
+        return out
+
+    tour.wait("templates drafted", lambda: len(tries) >= 3, do, steps=steps, timeout=60)
+    assert len(tries) == 3

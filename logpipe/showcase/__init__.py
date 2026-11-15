@@ -123,17 +123,22 @@ class Tour:
         """Until ``done()``; Enter (or --auto) runs ``do`` instead of waiting for the UI.
         ``live`` is a counter (lines collected, your review); ``steps`` gives the background
         job's new steps (LLM prompts, answers, epochs), each printed as it happens. With
-        ``give_up``, a timeout prints it and the tour goes on instead of stopping."""
+        ``give_up``, a timeout prints it and the tour goes on instead of stopping. When ``do``
+        is refused or its job fails, the reason is printed and Enter tries again."""
         hint = " (or press Enter and I'll do it)" if do else ""
         self.say(f"… waiting: {what}{hint}", Y, 2)
         _drop_typed_ahead()  # an Enter pressed earlier must not do this act for you
         did, start = False, time.monotonic()
         if self.auto and do:
-            do()
-            did = True
+            did = self._try(do)
         while True:
             for line in _ask(steps, []) if steps else []:
                 self.say(line)
+                if do and " job failed: " in line:
+                    did = False  # otherwise nothing can move the act on but the UI
+                    if self.auto:
+                        raise SystemExit(f"gave up: {line}")
+                    self.say("press Enter to try again, or do it in the UI", Y, 2)
             if _ask(done, False):
                 break
             if time.monotonic() - start > timeout:
@@ -145,11 +150,25 @@ class Tour:
                 self.live(_ask(live, "server busy, still waiting"))
             if not did and do and _enter_pressed(1.0):
                 self.say("(doing it for you)")
-                do()
-                did = True
+                did = self._try(do)
             elif did or not do:
                 time.sleep(1.0)
         self.say(f"✓ {what}", G, 2)
+
+    def _try(self, do: Callable[[], None]) -> bool:
+        """``do()``; False (with the server's reason printed) when the server refused it."""
+        try:
+            do()
+            return True
+        except urllib.error.HTTPError as e:
+            try:
+                reason = json.loads(e.read() or b"null")["detail"]
+            except (ValueError, TypeError, KeyError):
+                reason = e.reason
+            if self.auto:
+                raise SystemExit(f"the server refused it: {reason}") from None
+            self.say(f"the server refused it: {reason}; press Enter to try again", Y, 2, wrap=True)
+            return False
 
     def pause(self, text: str = "press Enter for the next act") -> None:
         if self.auto:
