@@ -298,7 +298,9 @@ export interface Stream {
   trained_at?: string;
   model_version?: string;
   windows?: number;
-  miss_threshold?: number;
+  miss_threshold?: number | null;
+  /** false: the lines' order is no better than guessing (e.g. an access log), so no sequence alerts */
+  sequence_alerts?: boolean;
   model_error?: string | null;
   waiting?: boolean;
   data?: Readiness;

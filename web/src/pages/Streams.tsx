@@ -145,7 +145,9 @@ function StreamCard({ s, group, defaultDays, onEdit }: { s: Stream; group?: stri
           {s.waiting && s.data && <><dt>Training data</dt><dd><Meter have={s.data.have} need={s.data.need} unit="windows" />
             <span className="muted small">Trains by itself once it has enough; checked every minute.</span></dd></>}
           {s.trained_at && <><dt>Trained</dt><dd><TimeAgo iso={s.trained_at} /> on {s.windows} windows, {s.vocab} templates</dd></>}
-          {s.miss_threshold !== undefined && <><dt>Alert when</dt><dd>over {Math.round(s.miss_threshold * 100)}% of masked events are mispredicted</dd></>}
+          {s.sequence_alerts === false
+            ? <><dt>Alert when</dt><dd>never on order: these lines come in no order the model can learn (independent requests), so it would only flag random shuffles. New kinds of lines still show up in Maintenance.</dd></>
+            : s.miss_threshold != null && <><dt>Alert when</dt><dd>over {Math.round(s.miss_threshold * 100)}% of masked events are mispredicted</dd></>}
           <dt>Retrains</dt><dd>every {s.retrain_days ?? defaultDays} days if it has unseen templates</dd>
           {s.model_error && <><dt>Last attempt</dt><dd className="error-text">{s.model_error}</dd></>}
         </dl>

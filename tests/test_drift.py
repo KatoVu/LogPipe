@@ -54,3 +54,11 @@ def test_server_tracks_drift_per_stream(env):  # noqa: F811
     assert "alert_window_pct" in values
     server.sample_metrics()
     assert server.sample_metrics()["new_templates_per_hour"] >= 0
+
+
+def test_sequence_signal_only_when_the_model_beats_guessing():
+    from logpipe.server.drift import sequence_signal
+
+    assert sequence_signal([0.0] * 50 + [0.1] * 5, chance=0.5)  # a real order: shop-api, postgres
+    assert not sequence_signal([0.3] * 50 + [0.75], chance=0.5)  # access log: ~guessing
+    assert sequence_signal([], chance=0.5) and sequence_signal([0.9], chance=0.0)

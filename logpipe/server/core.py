@@ -55,7 +55,7 @@ from ..storage.memory import MemoryStore
 from ..unresolved import UnresolvedQueue
 from . import review
 from .control import ControlStore
-from .drift import Drift, histogram
+from .drift import Drift, histogram, sequence_signal
 from .groups import Groups
 from .metrics import (
     ClickHouseSeries,
@@ -1473,7 +1473,13 @@ class Server:
         misses = [s.miss_ratio for s in scorer.score(windows[:n_valid])]
         # shortcut: a percentile threshold without labels; tune with labelled incidents when there are some.
         miss = max(0.3, float(np.quantile(misses, 0.99))) if misses else 0.5
-        scorer.settings.thresholds = Thresholds(miss_ratio=miss, novelty_ratio=float("inf"))
+        # Lines in no real order (an access log of independent requests) can't be predicted much
+        # better than guessing; a percentile threshold then alerts on random shuffles of normal lines.
+        chance = 1 - min(1.0, scorer.settings.num_candidates / max(1, len(vocab.template_ids)))
+        ordered = sequence_signal(misses, chance)
+        scorer.settings.thresholds = Thresholds(
+            miss_ratio=miss if ordered else float("inf"), novelty_ratio=float("inf")
+        )
         scorer.save(self._model_dir(stream_id))
         progress(
             0.95,
@@ -1481,7 +1487,10 @@ class Server:
             {
                 f"{name}: output": {
                     "model version": version,
-                    "miss-ratio threshold": round(miss, 3),
+                    "miss-ratio threshold": round(miss, 3)
+                    if ordered
+                    else f"none: typical miss {np.median(misses):.2f} vs {chance:.2f} by guessing, "
+                    "so the order of these lines carries no signal and sequence alerts are off",
                     "held-out miss ratio p50 / p99": (
                         f"{np.quantile(misses, 0.5):.3f} / {np.quantile(misses, 0.99):.3f}"
                         if misses
@@ -1501,7 +1510,8 @@ class Server:
             model_version=version,
             vocab=sorted(vocab.to_json()),
             windows=len(windows),
-            miss_threshold=round(miss, 3),
+            miss_threshold=round(miss, 3) if ordered else None,
+            sequence_alerts=ordered,
             model_error=None,
             waiting=False,
             miss_baseline=histogram(misses) if misses else None,
