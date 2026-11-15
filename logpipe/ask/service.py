@@ -182,7 +182,8 @@ class AskService:
                 status=PlanStatus.WAITING,
                 expires_at=(now + get_settings().ask.plan_ttl).isoformat(),
             )
-            if not plan["require_approval"]:
+            # approving a question's first round covers the follow-ups it leads to (all read-only)
+            if not plan["require_approval"] or plan.get("approved_once"):
                 for q in plan["rounds"][-1]["queries"]:
                     q["status"] = QueryStatus.APPROVED
                 plan["status"] = PlanStatus.APPROVED
@@ -257,7 +258,7 @@ class AskService:
             raise ValueError("approve at least one query, or reject the plan")
         for q in current["queries"]:
             q["status"] = QueryStatus.APPROVED if q["id"] in chosen else QueryStatus.REJECTED
-        plan.update(status=PlanStatus.APPROVED, approved_at=_now().isoformat())
+        plan.update(status=PlanStatus.APPROVED, approved_at=_now().isoformat(), approved_once=True)
         self._put(plan)
         job = self.server.enqueue("ask", plan=plan_id, round=current["n"])
         self.server.events.notify()
@@ -276,6 +277,7 @@ class AskService:
             state={},
             via=f"{plan['via']}, edited",
             require_approval=True,
+            approved_once=False,
         )
         return self._plan(plan, first_round(new, self.ctx(now, question=plan["question"])), now)
 

@@ -79,12 +79,12 @@ def test_per_query_approval_and_reject(ready):
     after = client.get(f"/api/ask/{plan['id']}").json()
     statuses = [q["status"] for q in after["rounds"][0]["queries"]]
     assert statuses[:2] == ["done", "done"] and set(statuses[2:]) == {"rejected"}
-    # the next round (or the answer) came from what was approved; any next round waits again
-    assert after["status"] in ("waiting_approval", "done")
-    if after["status"] == "waiting_approval":
-        assert all(q["status"] == "pending" for q in after["rounds"][-1]["queries"])
-        assert client.post(f"/api/ask/{plan['id']}/reject").json()["status"] == "rejected"
-        assert client.post(f"/api/ask/{plan['id']}/approve").status_code == 400
+    # approving the first round covers the follow-ups: they ran in the same job, unasked
+    assert after["status"] == "done" and after["approved_once"]
+    assert all(q["status"] in ("done", "failed") for r in after["rounds"][1:] for q in r["queries"])
+    assert client.post(f"/api/ask/{plan['id']}/approve").status_code == 400
+    other = plan_of(client, "why did db go down?")  # a new question asks again
+    assert client.post(f"/api/ask/{other['id']}/reject").json()["status"] == "rejected"
 
 
 def test_toggle_off_runs_rounds_but_a_request_can_still_ask_for_approval(ready):
@@ -184,7 +184,7 @@ def test_shutdown_set_is_editable(ready):
     )
 
 
-def test_follow_up_reads_wait_for_approval_and_stop_at_four(ready):
+def test_follow_up_reads_run_after_one_approval_and_stop_at_four(ready):
     server, client = ready
 
     class Curious:
@@ -204,15 +204,11 @@ def test_follow_up_reads_wait_for_approval_and_stop_at_four(ready):
     server._adapter = Curious()
     plan = plan_of(client, "what is wrong with the database lately")
     assert plan["via"] == "llm"
-    purposes = []
-    for _ in range(10):
-        p = client.get(f"/api/ask/{plan['id']}").json()
-        if p["status"] != "waiting_approval":
-            break
-        purposes.append(p["rounds"][-1]["purpose"])
-        client.post(f"/api/ask/{plan['id']}/approve")
-        run_jobs(server)
+    assert plan["status"] == "waiting_approval"
+    client.post(f"/api/ask/{plan['id']}/approve")  # once: the follow-ups run without asking
+    run_jobs(server)
     done = client.get(f"/api/ask/{plan['id']}").json()
+    purposes = [r["purpose"] for r in done["rounds"]]
     follow = [x for x in purposes if x.startswith("follow-up")]
     assert follow == [f"follow-up {i} of 4" for i in range(1, 5)]
     assert done["status"] == "done" and done["result"]["answer"]["insufficient_evidence"]

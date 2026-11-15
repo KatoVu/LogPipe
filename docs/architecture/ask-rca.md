@@ -37,7 +37,9 @@ flowchart TD
 - **QuerySpec only.** Whatever produced the spec (fast path, LLM, a person editing it), it's
   validated against what actually exists; anything it can't vouch for is refused.
 - **The server enforces approval**, not the UI. With approval off in Settings, rounds are
-  approved as planned; a request can turn approval *on* but never off.
+  approved as planned; a request can turn approval *on* but never off. With it on, a person
+  approves a question once: the first round waits, and the follow-up rounds it leads to run
+  without asking again (they are read-only reads of the same question).
 - **Read-only at three layers**: specs compile through the store adapter's builder (never raw
   LLM SQL); the SQL guard (`enrich/sql_guard.py`) blocks writes and ClickHouse table functions
   (`url`, `file`, `remote`, `s3` …); and the reads run as a read-only database user
@@ -120,7 +122,7 @@ The LLM may also ask for **typed follow-up moves** (`ask/moves.py`), never SQL:
 | `rate` | error or all lines per service per step (cited `S1…`) | known services |
 | `neighbours` | errors in any service near the anchor | — |
 
-Up to 3 moves a round and 4 follow-up rounds, each approved like any other read.
+Up to 3 moves a round and 4 follow-up rounds, covered by the approval of the first round.
 
 **Without an LLM** the answer is the evidence itself: a timeline of the bundle and the top
 candidates (plus a strong hint) as *leads*, labelled a ranking, not a diagnosis.
