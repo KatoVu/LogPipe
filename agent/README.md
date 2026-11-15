@@ -25,12 +25,37 @@ agent as `conf.d/remote.yaml`), or mount your own `conf.d`:
 
 ## Quick start (binary)
 
+Every release has binaries for Linux (amd64, arm64, armv7) and macOS (amd64, arm64). The installer
+picks yours, checks its sha256 and puts it in `~/.local/bin` (`/usr/local/bin` as root):
+
 ```bash
-cd agent && go build -o logpipe-agent .
-./logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
-./logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
-./logpipe-agent check
-./logpipe-agent run
+curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
+logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
+logpipe-agent check
+logpipe-agent run
+```
+
+`LOGPIPE_AGENT_VERSION=v1.0.1` pins a release, `LOGPIPE_AGENT_INSTALL_DIR` changes where it goes,
+and `LOGPIPE_AGENT_BASE_URL` points at a mirror holding the release files. Without the script,
+download `logpipe-agent_<os>_<arch>.tar.gz` and `checksums.txt` from the
+[releases page](https://github.com/KatoVu/LogPipe/releases). From source: `cd agent && go build -o logpipe-agent .`
+
+To keep it running after a reboot, a systemd user unit is enough
+(`~/.config/systemd/user/logpipe-agent.service`, then `systemctl --user enable --now logpipe-agent`
+and `loginctl enable-linger $USER`):
+
+```ini
+[Unit]
+Description=logpipe-agent
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/logpipe-agent run
+Restart=always
+
+[Install]
+WantedBy=default.target
 ```
 
 No sudo needed. As a normal user the config lives in `~/.config/logpipe-agent` (offsets and the

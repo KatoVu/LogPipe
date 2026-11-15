@@ -31,7 +31,21 @@ traces, and can drop or mask lines before they leave the host.
       `conf.d` holds your sources (optional: sources can also be pushed from the UI).
     - The image has no `journalctl`, so for journald sources run the binary on the host.
 
-=== "Binary (Go)"
+=== "Binary"
+
+    Each release has binaries for Linux (amd64, arm64, armv7) and macOS (amd64, arm64). The
+    installer picks yours, checks its sha256 and installs to `~/.local/bin` (`/usr/local/bin` as
+    root):
+
+    ```sh
+    curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+    ```
+
+    `LOGPIPE_AGENT_VERSION=v1.0.1` pins a release, `LOGPIPE_AGENT_INSTALL_DIR` changes the target
+    directory, and `LOGPIPE_AGENT_BASE_URL` points at a mirror. `agent/README.md` has a systemd unit
+    to keep it running.
+
+=== "From source (Go)"
 
     Needs Go 1.23+.
 

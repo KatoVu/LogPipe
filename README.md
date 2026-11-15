@@ -167,14 +167,16 @@ docker run -d --name logpipe-agent --restart unless-stopped \
   -v logpipe-agent:/var/lib/logpipe-agent ghcr.io/katovu/logpipe-agent:latest
 ```
 
-or from source (Go 1.23+), no root needed
+or as a binary (Linux or macOS), no root needed
 
 ```sh
-cd agent && go build -o logpipe-agent .
-./logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
-./logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
-./logpipe-agent check && ./logpipe-agent run
+curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
+logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
+logpipe-agent check && logpipe-agent run
 ```
+
+(from source: `cd agent && go build -o logpipe-agent .`)
 
 See full guide here: [Install the agent](https://katovu.github.io/LogPipe/getting-started/agent/).
 
