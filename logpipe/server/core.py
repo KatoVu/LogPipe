@@ -1664,6 +1664,7 @@ class Server:
                 updated_at=state.get("updated_at"),
                 explanation=state.get("explanation"),
                 by=state.get("by"),
+                activity=state.get("activity") or [],
             )
         return sorted(out, key=lambda i: _when(i["end"]), reverse=True)
 
@@ -1742,7 +1743,14 @@ class Server:
         inc = next((i for i in self.incidents() if i["id"] == incident_id), None)
         if inc is None:
             raise KeyError(incident_id)
-        doc = (self.control.get("incident", incident_id) or {"id": incident_id}) | {
+        prev = self.control.get("incident", incident_id) or {"id": incident_id}
+        activity = list(prev.get("activity") or [])
+        if status != prev.get("status", "open"):
+            activity.append(
+                {"kind": "status", "status": status, "text": note[:2000], "by": by, "at": now_iso()}
+            )
+        doc = prev | {
+            "activity": activity,
             "status": status,
             "note": note[:2000],
             "updated_at": now_iso(),
@@ -1751,6 +1759,24 @@ class Server:
             # what the next retrain learns as normal if this was a false positive
             "windows": inc["windows"][:200] if status == "false_positive" else [],
         }
+        self.control.put("incident", incident_id, doc)
+        self.events.notify()
+        return doc
+
+    def comment_incident(self, incident_id: str, text: str, by: str | None = None) -> dict:
+        """A timestamped comment on the incident's activity, beside its status changes."""
+        text = text.strip()[:2000]
+        if not text:
+            raise ValueError("a comment needs some text")
+        inc = next((i for i in self.incidents() if i["id"] == incident_id), None)
+        if inc is None:
+            raise KeyError(incident_id)
+        prev = self.control.get("incident", incident_id) or {"id": incident_id, "status": "open"}
+        activity = [
+            *(prev.get("activity") or []),
+            {"kind": "comment", "text": text, "by": by, "at": now_iso()},
+        ]
+        doc = prev | {"activity": activity, "stream": inc["stream"]}
         self.control.put("incident", incident_id, doc)
         self.events.notify()
         return doc

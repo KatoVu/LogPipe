@@ -1,11 +1,12 @@
 // Anomaly alerts, grouped into incidents (one service's alerts close together in time). The list
 // says what to look at; an incident's page shows the lines the model found unusual and what it
-// expected instead, what else broke at the same time, a root-cause investigation (approved query by query), and what was decided.
-import { useState } from "react";
+// expected instead, what else broke at the same time, a root-cause investigation, and an activity timeline of
+// status changes and comments; the header keeps Resolve and the other actions in view.
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { IncidentAsk } from "../ask";
 import { api, useAction, usePoll, type Incident, type IncidentDetail, type IncidentStatus } from "../api";
-import { Card, Empty, Loading, PageHead, Switch, time } from "../ui";
+import { Card, Empty, Loading, PageHead, Pop, Switch, TimeAgo, time } from "../ui";
 
 export const STATUS: Record<IncidentStatus, { label: string; badge: string }> = {
   open: { label: "Open", badge: "bad" },
@@ -64,27 +65,107 @@ export default function Alerts() {
   );
 }
 
-function Decide({ inc }: { inc: IncidentDetail }) {
-  const [note, setNote] = useState(inc.note);
-  const set = useAction((status: IncidentStatus) => api(`/api/incidents/${inc.id}`, { method: "PUT", json: { status, note } }));
-  const button = (status: IncidentStatus, label: string, cls = "") => inc.status !== status && (
-    <button className={`btn small ${cls}`} disabled={set.isPending} onClick={() => set.mutate(status)}>{label}</button>
-  );
+/** Moving an incident to a status, with an optional note that goes on its activity. */
+function Confirm({ inc, status, onDone }: { inc: IncidentDetail; status: IncidentStatus; onDone: () => void }) {
+  const [text, setText] = useState("");
+  const set = useAction(() => api(`/api/incidents/${inc.id}`, { method: "PUT", json: { status, note: text } }));
+  const fp = status === "false_positive";
   return (
-    <div className="stack" style={{ gap: 8 }}>
+    <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); set.mutate(undefined, { onSuccess: onDone }); }}>
+      <div className="pop-title">{fp ? "Mark as a false positive" : status === "resolved" ? "Resolve this incident" : `Mark as ${STATUS[status].label.toLowerCase()}`}</div>
+      {fp && <p className="muted small" style={{ margin: 0 }}>This is how {inc.service || inc.host} normally behaves. Its stretches join the training data, so the next retrain of <Link to="/streams">{inc.stream}</Link> stops flagging them.</p>}
+      <textarea autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} aria-label="Note"
+        placeholder={fp ? "Why it's normal (optional)" : status === "resolved" ? "What fixed it? (optional)" : "Note (optional)"} />
       <div className="row">
-        {button("acknowledged", "Acknowledge")}
-        {button("resolved", "Resolve", "primary")}
-        {button("false_positive", "Not a problem (false positive)")}
-        {inc.status !== "open" && button("open", "Reopen", "ghost")}
+        <button className="btn small primary" disabled={set.isPending}>{fp ? "Mark as false positive" : status === "resolved" ? "Resolve" : "Confirm"}</button>
+        <button type="button" className="btn small ghost" onClick={onDone}>Cancel</button>
       </div>
-      <input placeholder="Note: what you found, what you did" aria-label="Note" value={note} onChange={(e) => setNote(e.target.value)} />
-      {inc.by && inc.note === note && <p className="muted small" style={{ margin: 0 }}>Note written by AI assistant key {inc.by}</p>}
-      <p className="muted small" style={{ margin: 0 }}>
-        A false positive is how this service normally behaves: its stretches are added to the training data, so the next retrain of <Link to="/streams">{inc.stream}</Link> stops flagging them.
-      </p>
       {set.error && <div className="error-text small">{set.error.message}</div>}
-    </div>
+    </form>
+  );
+}
+
+function MoreMenu({ inc, close }: { inc: IncidentDetail; close: () => void }) {
+  const [to, setTo] = useState<IncidentStatus | null>(null);
+  const reopen = useAction(() => api(`/api/incidents/${inc.id}`, { method: "PUT", json: { status: "open", note: "" } }));
+  if (to) return <Confirm inc={inc} status={to} onDone={close} />;
+  return (
+    <ul className="menu-list">
+      {inc.status !== "false_positive" && <li><button type="button" onClick={() => setTo("false_positive")}>Not a problem…<span className="muted small">A false positive the model learns from</span></button></li>}
+      {inc.status !== "open" && <li><button type="button" onClick={() => reopen.mutate(undefined, { onSuccess: close })}>Reopen</button></li>}
+    </ul>
+  );
+}
+
+const DOTS = <svg className="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>;
+
+/** Title, status and the facts on the left; what you can do about it on the right. Stays in view. */
+function IncidentHeader({ inc }: { inc: IncidentDetail }) {
+  useEffect(() => { document.title = `${inc.service || inc.host} incident · logpipe`; }, [inc.service, inc.host]);
+  const ack = useAction(() => api(`/api/incidents/${inc.id}`, { method: "PUT", json: { status: "acknowledged", note: "" } }));
+  const reopen = useAction(() => api(`/api/incidents/${inc.id}`, { method: "PUT", json: { status: "open", note: "" } }));
+  const closed = inc.status === "resolved" || inc.status === "false_positive";
+  return (
+    <header className="inc-head">
+      <div className="inc-head-main">
+        <Link to="/alerts" className="inc-back small">Anomaly alerts</Link>
+        <div className="inc-title">
+          <h1>{inc.service || inc.host} <span className="muted">on {inc.host}</span></h1>
+          <span className={`badge ${STATUS[inc.status].badge}`}>{STATUS[inc.status].label}</span>
+        </div>
+        <div className="inc-facts">
+          <span>{time(inc.start)}</span><span>lasted {span(inc.start, inc.end)}</span>
+          <span><strong className="num">{inc.alerts}</strong> alert{inc.alerts === 1 ? "" : "s"}</span>
+          <span>up to <strong className="num">{Math.round(inc.peak_miss * 100)}%</strong> of events mispredicted</span>
+        </div>
+      </div>
+      <div className="inc-actions">
+        {inc.status === "open" && <button className="btn" disabled={ack.isPending} onClick={() => ack.mutate()}>Acknowledge</button>}
+        {closed ? <button className="btn" disabled={reopen.isPending} onClick={() => reopen.mutate()}>Reopen</button>
+          : <Pop className="btn-pop primary" label="Resolve" title="Resolve with an optional note">{(close) => <Confirm inc={inc} status="resolved" onDone={close} />}</Pop>}
+        <span className="inc-more"><Pop className="btn-pop icon-only" label={<>{DOTS}<span className="sr-only">More actions</span></>} title="More actions">{(close) => <MoreMenu inc={inc} close={close} />}</Pop></span>
+        {(ack.error || reopen.error) && <span className="error-text small">{(ack.error ?? reopen.error)!.message}</span>}
+      </div>
+    </header>
+  );
+}
+
+/** Status changes and comments in one timeline, with a box to add a comment. */
+function Activity({ inc }: { inc: IncidentDetail }) {
+  const [text, setText] = useState("");
+  const add = useAction(() => api(`/api/incidents/${inc.id}/comments`, { method: "POST", json: { text } }));
+  // incidents from before the timeline kept one note: show it as the first entry
+  const items = inc.activity?.length ? inc.activity
+    : inc.note ? [{ kind: "comment" as const, text: inc.note, by: inc.by ?? null, at: inc.updated_at ?? inc.end }] : [];
+  return (
+    <Card title="Activity" className="inc-activity">
+      {items.length === 0 ? <p className="muted small" style={{ margin: "0 0 10px" }}>No comments or status changes yet.</p> : (
+        <ol className="activity">
+          {items.map((a, i) => (
+            <li key={i} className={`act-${a.kind}`}>
+              <span className="act-dot" aria-hidden="true" />
+              <div className="grow">
+                <div className="small">
+                  <strong>{a.by ? `AI key ${a.by}` : "Admin"}</strong>{" "}
+                  {a.kind === "status" && a.status ? <>marked it <span className={`badge ${STATUS[a.status].badge}`}>{STATUS[a.status].label}</span></> : "commented"}
+                  <span className="muted"> · <TimeAgo iso={a.at} /></span>
+                </div>
+                {a.text && <p className="act-text">{a.text}</p>}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      <form className="act-compose" onSubmit={(e) => { e.preventDefault(); if (text.trim()) add.mutate(undefined, { onSuccess: () => setText("") }); }}>
+        <textarea id="inc-comment" rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-label="Comment" placeholder="Add a comment: what you found, what you did"
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) add.mutate(undefined, { onSuccess: () => setText("") }); }} />
+        <div className="row">
+          <button className="btn small" disabled={!text.trim() || add.isPending}>Comment</button>
+          <span className="muted small">Ctrl/⌘ + Enter</span>
+          {add.error && <span className="error-text small">{add.error.message}</span>}
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -99,10 +180,9 @@ export function IncidentPage() {
   const events = onlyUnusual ? inc.events.filter((e) => e.status !== "expected") : inc.events;
   return (
     <>
-      <PageHead title={`${inc.service || inc.host} on ${inc.host}`}
-        sub={<><span className={`badge ${STATUS[inc.status].badge}`}>{STATUS[inc.status].label}</span> {time(inc.start)} to {time(inc.end)} · {inc.alerts} alert{inc.alerts === 1 ? "" : "s"}, up to {Math.round(inc.peak_miss * 100)}% of events mispredicted · <Link to="/alerts">All incidents</Link></>} />
+      <IncidentHeader inc={inc} />
+      <div className="inc-layout">
       <div className="stack">
-        <Card title="Decision"><Decide inc={inc} /></Card>
         <IncidentAsk incident={inc.id} plan={inc.ask_plan} />
         <Card title={`The lines (${unusual} of ${inc.events.length} unusual)`}
           hint={inc.model_current ? "Each line masked in turn: did the model expect it there, and what it expected instead."
@@ -143,6 +223,8 @@ export function IncidentPage() {
             </ol>
           )}
         </Card>
+      </div>
+      <Activity inc={inc} />
       </div>
     </>
   );
