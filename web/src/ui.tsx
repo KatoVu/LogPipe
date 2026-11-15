@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Job } from "./api";
 
 export function PageHead({ title, sub, actions }: { title: string; sub?: ReactNode; actions?: ReactNode }) {
@@ -297,5 +297,27 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
         <button key={v} type="button" className={v === value ? "on" : ""} aria-pressed={v === value} onClick={() => onChange(v)}>{text}</button>
       ))}
     </div>
+  );
+}
+
+/** A button that opens a small panel under it; closes on Escape or a click outside. */
+export function Pop({ label, children, className = "", title }: {
+  label: ReactNode; children: (close: () => void) => ReactNode; className?: string; title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); ref.current?.querySelector("button")?.focus(); } };
+    document.addEventListener("mousedown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
+  }, [open]);
+  return (
+    <span className="pop" ref={ref}>
+      <button type="button" className={`pill ${className}`} aria-expanded={open} aria-haspopup="dialog" title={title} onClick={() => setOpen(!open)}>{label}</button>
+      {open && <div className="pop-panel" role="dialog">{children(() => setOpen(false))}</div>}
+    </span>
   );
 }
