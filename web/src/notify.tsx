@@ -1,5 +1,5 @@
 // Toasts (and, opted in, desktop notifications) for a new anomaly incident, a firing metric alert,
-// new maintenance to-dos and jobs that are queued, finish or fail; alerts and maintenance also
+// new maintenance to-dos and jobs that are queued, finish or fail; all but queued jobs also
 // chime unless muted. Plus the counts the sidebar shows. Only what changes after the page
 // loaded is announced, never the backlog.
 import { useEffect, useRef, useState } from "react";
@@ -23,6 +23,8 @@ let audio: AudioContext | null = null;
 function chime() {
   try {
     audio ??= new AudioContext();
+    // made from a poll, not a click, so it can start suspended; resuming works once the page has had one
+    if (audio.state === "suspended") void audio.resume();
     const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
     osc.frequency.setValueAtTime(880, t);
     osc.frequency.setValueAtTime(660, t + 0.12);
@@ -106,9 +108,9 @@ export function useNotifications(todo?: number) {
       if (before === undefined && (j.status === "queued" || j.status === "running"))
         push({ id: `job-${j.id}`, title: "Job queued", body: what, to: "/jobs", tone: "info" }, false);
       else if (j.status === "done")
-        push({ id: `job-${j.id}`, title: "Job finished", body: `${what}: ${j.message}`, to: "/jobs", tone: "good" }, true);
+        push({ id: `job-${j.id}`, title: "Job finished", body: `${what}: ${j.message}`, to: "/jobs", tone: "good" }, true, true);
       else if (j.status === "failed")
-        push({ id: `job-${j.id}`, title: "Job failed", body: `${what}: ${j.error ?? ""}`, to: "/jobs", tone: "bad" }, true);
+        push({ id: `job-${j.id}`, title: "Job failed", body: `${what}: ${j.error ?? ""}`, to: "/jobs", tone: "bad" }, true, true);
     }
   }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -158,7 +160,7 @@ export function DesktopToggle() {
   );
 }
 
-/** Mute the chime that plays with anomalies, metric alerts and new maintenance. */
+/** Mute the chime that plays with anomalies, metric alerts, new maintenance and finished jobs. */
 export function SoundToggle() {
   const [on, setOn] = useState(soundOn);
   const toggle = (next: boolean) => {
@@ -169,7 +171,7 @@ export function SoundToggle() {
   return (
     <div className="stack" style={{ gap: 4 }}>
       <Switch checked={on} onChange={toggle} label="Alert sound" />
-      <span className="muted small">A short chime with anomalies, metric alerts and new maintenance items.</span>
+      <span className="muted small">A short chime with anomalies, metric alerts, new maintenance items and finished or failed jobs.</span>
     </div>
   );
 }
