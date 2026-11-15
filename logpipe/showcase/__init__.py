@@ -24,7 +24,6 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-from ..ask.service import PlanStatus
 from ..settings import get_settings
 from .datadog import ShowcaseDatadog
 from .generator import FILES, ShopGenerator
@@ -886,16 +885,6 @@ def _ask_act(t: Tour, api: Api) -> None:
     t.pause()
 
 
-def _approve_until(api: Api, done: Callable[[], bool], seconds: float = 300) -> None:
-    """Approve every Ask round waiting for a person (the default) until ``done()``."""
-    end = time.monotonic() + seconds
-    while time.monotonic() < end and not _ask(done, False):
-        for p in api("/api/ask")["plans"]:
-            if p["status"] == PlanStatus.WAITING:
-                api(f"/api/ask/{p['id']}/approve", {})
-        time.sleep(2)
-
-
 def _dd_connected(t: Tour, dd: ShowcaseDatadog) -> None:
     t.act(
         "1b",
@@ -934,7 +923,7 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
         timeout=180,
         give_up="no event yet; see the server output.",
     )
-    live, steps = _rca_progress(t.api)
+    live, steps = _rca_progress(t.api, lambda p: bool(p.get("incident")))
     t.wait(
         "its root cause posted to Datadog",
         lambda: dd.event(f"logpipe RCA: {HOST}"),
@@ -946,12 +935,15 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
     t.say(f"Each LLM step of that analysis, with prompts and tokens: {dd.links['llm']}")
 
 
-def _rca_progress(api: Api) -> tuple[Callable[[], str], Callable[[], list[str]]]:
-    """The incident analysis's progress: a live line, and each LLM step once it finishes."""
+def _rca_progress(
+    api: Api, pick: Callable[[dict], bool]
+) -> tuple[Callable[[], str], Callable[[], list[str]]]:
+    """An analysis's progress (the newest plan ``pick`` matches): a live line, and each LLM step
+    once it finishes."""
     printed: set[str] = set()
 
     def plan() -> dict | None:
-        return next((p for p in api("/api/ask")["plans"] if p.get("incident")), None)
+        return next((p for p in api("/api/ask")["plans"] if pick(p)), None)
 
     def live() -> str:
         p = plan()
@@ -999,14 +991,22 @@ def _dd_webhook(t: Tour, dd: ShowcaseDatadog, token: str) -> None:
             "A Datadog monitor can call logpipe through a webhook (see docs/guides/datadog.md).",
             f"I'll send what one would: {B}[Triggered] shop-api error rate is high{R}.",
             "logpipe analyses the logs around that moment and posts the answer back as an event.",
+            f"{B}Nothing to do here:{R} I send it now, and the analysis runs by itself (no approval:",
+            "a webhook runs unattended). Each LLM step takes a while (a browser chat like Gemini",
+            "about half a minute), so the answer can take a few minutes.",
         ],
     )
     title = "logpipe RCA: [Triggered]"
-
-    def fire() -> None:
-        dd.webhook(t.url, token, "shop-api")
-        _approve_until(t.api, lambda: dd.event(title))
-
-    t.wait("the answer posted to Datadog", lambda: dd.event(title), fire, timeout=300)
+    plan_id = dd.webhook(t.url, token, "shop-api")
+    t.say(f"sent; analysis {plan_id} started")
+    live, steps = _rca_progress(t.api, lambda p: p["id"] == plan_id)
+    t.wait(
+        "the answer posted to Datadog",
+        lambda: dd.event(title),
+        timeout=600,
+        live=live,
+        steps=steps,
+        give_up="not posted yet; the analysis is on the Query page under Ask, and posts when done.",
+    )
     t.say(dd.links["events"])
     t.pause()
