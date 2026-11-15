@@ -76,7 +76,7 @@ export function InstallStep({ token }: { token: string }) {
         <button type="button" className={how === "binary" ? "on" : ""} aria-pressed={how === "binary"} onClick={() => setHow("binary")}>Binary</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>Run this on the host whose logs you want.
-        {how === "docker" ? " It reads /var/log and container output." : " Installs the binary for Linux or macOS to ~/.local/bin; no sudo needed. Your user must be able to read the files (e.g. be in the adm group)."}</p>
+        {how === "docker" ? " It reads /var/log and container output. For journald, add -v /etc/machine-id:/etc/machine-id:ro." : " Installs the binary for Linux or macOS to ~/.local/bin; no sudo needed. Your user must be able to read the files (e.g. be in the adm group)."}</p>
       <CopyBlock text={cmds[how]} />
     </div>
   );

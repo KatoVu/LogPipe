@@ -24,7 +24,7 @@ traces, and can drop or mask lines before they leave the host.
       -v "$PWD/conf.d:/etc/logpipe-agent/conf.d" \
       ghcr.io/katovu/logpipe-agent:latest
     ```
-
+    
     | Part | What it is for |
     |---|---|
     | `-d --restart unless-stopped` | runs in the background and comes back after a crash or reboot |
@@ -34,7 +34,11 @@ traces, and can drop or mask lines before they leave the host.
     | `-v /var/run/docker.sock:…:ro` | lets it read other containers' logs |
     | `-v logpipe-agent:/var/lib/logpipe-agent` | keeps file offsets and the send buffer across restarts |
     | `-v "$PWD/conf.d:/etc/logpipe-agent/conf.d"` | keeps the sources you add with `track`; leave it out if you only add sources in the UI |
-
+    
+    For journald sources add `-v /etc/machine-id:/etc/machine-id:ro` (journalctl only shows
+      this machine's journal, found through the `/var/log` mount); on hosts with a volatile
+      journal also add `-v /run/log/journal:/run/log/journal:ro`.
+      
     The image is built for amd64, arm64 and arm/v7. It has no `journalctl`, so for journald
     sources use the binary. To build it yourself: `docker build -t logpipe-agent agent/`. Next:
     [use the container](#use-the-container).
