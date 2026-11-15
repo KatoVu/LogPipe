@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import threading
 from pathlib import Path
 
 from ..observability import Datadog
@@ -71,10 +70,8 @@ def run(
     store: str,
     queue: str,
     llm: str,
-    browser: str,
     data_dir: Path,
     epochs: int,
-    demo: bool = False,
     datadog: Datadog | None = None,
     datadog_pull: str = "",
 ) -> None:
@@ -105,7 +102,7 @@ def run(
         control,
         data_dir=data_dir,
         epochs=epochs,
-        adapter_factory=lambda: dd.traced(get_adapter(llm, browser=browser), llm),  # type: ignore[arg-type]
+        adapter_factory=lambda: dd.traced(get_adapter(llm), llm),  # type: ignore[arg-type]
         queue_factory=lambda: open_queue(queue),
         bootstrap_key=get_settings().server.bootstrap_key or None,
         datadog=dd,
@@ -122,12 +119,6 @@ def run(
     from .auth import Auth
 
     generated = Auth(control).ensure(get_settings().server.admin_password or None)
-    demo_instance = None
-    if demo:
-        from ..demo.server import Demo
-
-        demo_instance = Demo(llm=llm, browser=browser, cache_dir=Path("artifacts/demo"))  # type: ignore[arg-type]
-        threading.Thread(target=demo_instance.replay, daemon=True).start()
     print(
         f"[server] logpipe on http://{host}:{port}/ ({store} store, {queue} queue, {llm}); "
         f"log: {log_file}",
@@ -142,7 +133,7 @@ def run(
     try:
         # SSE streams and agent long-polls never end on their own
         uvicorn.run(
-            create_app(server, demo_instance, {"store": store, "queue": queue, "llm": llm}),
+            create_app(server, {"store": store, "queue": queue, "llm": llm}),
             host=host,
             port=port,
             log_config=None,

@@ -118,41 +118,37 @@ flowchart LR
 
 ## Setting up the server
 
-The server takes in agent logs, runs the operator UI on port 8080 and trains the models. It
-stores data in ClickHouse (or MongoDB). A new server's UI password is `changeme` (unless
-`LOGPIPE_ADMIN_PASSWORD` is set); the first login asks you to replace it.
-
-### Using the shipped container
-
-```sh
-git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
-cp .env.example .env             # set the passwords
-docker compose pull server       # ghcr.io/katovu/logpipe-server:latest
-docker compose up -d clickhouse server
-docker compose logs server | grep -i password
-```
-
-Open http://localhost:8080 and follow the setup guide. To also start a demo log generator and an
-agent, use `--profile platform up -d`. To run on MongoDB, use `--profile platform-mongo`.
-If you already run ClickHouse, run the image on its own:
-
-```sh
-docker run -d --name logpipe-server --restart unless-stopped -p 8080:8080 \
-  --env-file .env -e CLICKHOUSE_HOST=clickhouse.example \
-  -v logpipe-server:/app/artifacts ghcr.io/katovu/logpipe-server:latest
-```
-
-### From source
-
-Needs [uv](https://docs.astral.sh/uv/), Node 20+ and Docker (for ClickHouse).
+The server takes in agent logs, runs the operator UI on port 8080 and trains the models.
+Needs [uv](https://docs.astral.sh/uv/), Node 20+, Docker and `chromium` on your `PATH`.
 
 ```sh
 git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 make setup                                   # uv sync + .env
 cd web && npm ci && npm run build && cd ..   # UI into logpipe/server/static
-docker compose up -d clickhouse
-uv run logpipe server --store clickhouse     # log in with changeme, then set your own
+uv run logpipe start                         # pick "server", then Enter through the defaults
 ```
+
+`logpipe start` asks a few questions, and pressing Enter takes the defaults: **Kafka** for the
+unresolved queue, **MongoDB** for storage, and **Gemini** (signed out, driven in Chromium) as the
+LLM. It starts Kafka and MongoDB in Docker, asks for the UI password, and runs the server on
+http://localhost:8080. Your answers are saved and become next time's defaults. To use an API
+key instead of the web chat, see [Set up an LLM](https://katovu.github.io/LogPipe/getting-started/llm/).
+
+For a guided tour of every feature, run `uv run logpipe showcase`. It wipes the Docker volumes
+of the services it starts, so each tour begins from an empty store.
+
+### Using the shipped container
+
+```sh
+cp .env.example .env                                       # set the passwords
+docker compose --profile platform-mongo up -d server_mongo # MongoDB + ghcr.io/katovu/logpipe-server
+docker compose logs server_mongo | grep -i password
+```
+
+The container keeps its unresolved queue in memory. For ClickHouse, use
+`docker compose up -d clickhouse server` instead, or `--profile platform up -d` to add a log
+generator and an agent
+([MongoDB guide](https://katovu.github.io/LogPipe/guides/mongodb/)).
 
 ## Install the agent
 
@@ -234,12 +230,10 @@ to the settings behind the UI. One flag switches it: `--store mongodb`, or the
 
 | | |
 |---|---|
-| [Getting started](https://katovu.github.io/LogPipe/getting-started/) | install, every way to run it, all commands |
+| [Getting started](https://katovu.github.io/LogPipe/getting-started/) | install, LLM API setup, every way to run it, all commands |
 | [Architecture](https://katovu.github.io/LogPipe/architecture/) | parsing, online learning, LogBERT, server lifecycle, Ask & RCA, MCP, storage, with diagrams |
 | [Benchmarks](https://katovu.github.io/LogPipe/benchmarks/) | results, RCAEval, throughput |
 | [Guides](https://katovu.github.io/LogPipe/guides/code-structure/) | code structure, replacing components, configuration, Datadog, MongoDB, maintenance, CI |
-| [Security](https://katovu.github.io/LogPipe/security/) | threat model and defences |
-| [Design records](https://katovu.github.io/LogPipe/plan/) | personas, feature plans and technical decisions |
 
 ## Acknowledgements
 

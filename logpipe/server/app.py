@@ -1,5 +1,5 @@
 """HTTP surface of ``logpipe server``: ``/intake/v1/*`` for agents (API key), ``/api/*`` for the
-React UI, the built UI at ``/`` and the developer demo at ``/demo/``."""
+React UI and the built UI at ``/``."""
 
 import asyncio
 import importlib.metadata
@@ -10,14 +10,13 @@ import zlib
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
-    RedirectResponse,
     Response,
     StreamingResponse,
 )
@@ -33,7 +32,6 @@ from .metrics import METRICS
 from .stores import FACETS
 
 STATIC = Path(__file__).with_name("static")
-DEMO_INDEX = Path(__file__).parent.parent / "demo" / "index.html"
 
 
 def bearer(authorization: str | None) -> str | None:
@@ -45,7 +43,7 @@ def caller(request: Request) -> str | None:
     return request.state.key["name"] if request.state.key else None
 
 
-def create_app(server: Server, demo: Any = None, info: dict | None = None) -> FastAPI:
+def create_app(server: Server, info: dict | None = None) -> FastAPI:
     """``info``: how ``logpipe server`` was started (store, queue, LLM backend), shown on Settings."""
     started = now_iso()
     assistant = build_mcp()
@@ -70,7 +68,7 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
             if key is None:
                 return JSONResponse({"detail": "an AI assistant (mcp) API key is required"}, 401)
             return await call_next(request)
-        guarded = path.startswith(("/api/", "/demo/api/")) and not path.startswith("/api/auth/")
+        guarded = path.startswith("/api/") and not path.startswith("/api/auth/")
         if guarded and key is not None:
             if not mcp_may_call(request.method, path):
                 return JSONResponse({"detail": "AI assistant keys can't call this route"}, 403)
@@ -932,52 +930,6 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
     @app.post("/api/jobs/{job_id}/retry", status_code=202)
     def retry_job(job_id: str) -> dict:
         return server.retry_job(job_id)
-
-    @app.get("/demo", include_in_schema=False)
-    def demo_redirect():
-        return RedirectResponse("/demo/")
-
-    @app.get("/demo/", include_in_schema=False)
-    def demo_page():
-        if demo is None:
-            return HTMLResponse(
-                "<!doctype html><meta charset=utf-8><title>logpipe demo</title>"
-                "<body style='font:16px system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem'>"
-                "<h1>Demo not running</h1><p>The developer demo replays a synthetic IoT fleet through "
-                "the whole pipeline. Start the server with <code>logpipe server --demo</code> "
-                "(it calibrates and trains a small model first), or run <code>logpipe demo</code> "
-                "on its own.</p><p><a href='/'>Back to logpipe</a></p>",
-                404,
-            )
-        return FileResponse(DEMO_INDEX)
-
-    if demo is not None:
-        demo_get = {
-            "stream": lambda q: demo.stream(int(q.get("after", 0))),
-            "system": lambda q: demo.system(),
-            "events": lambda q: demo.timeline(int(q.get("after", 0))),
-            "templates": lambda q: demo.templates(),
-            "query": lambda q: demo.query(q["sql"]),
-            "metrics": lambda q: demo.metrics(),
-            "trace": lambda q: demo.trace(int(q["i"])),
-            "eval": lambda q: demo.eval_report(),
-        }
-
-        @app.get("/demo/api/{name}", include_in_schema=False)
-        def demo_api(name: str, request: Request):
-            if name not in demo_get:
-                raise KeyError(name)
-            try:
-                return demo_get[name](dict(request.query_params))
-            except Exception as error:  # noqa: BLE001 - same {"error"} shape the demo page reads
-                return JSONResponse({"error": f"{type(error).__name__}: {error}"}, 400)
-
-        @app.post("/demo/api/control", include_in_schema=False)
-        def demo_control(action: str, value: str = ""):
-            try:
-                return demo.control(action, value)
-            except Exception as error:  # noqa: BLE001
-                return JSONResponse({"error": f"{type(error).__name__}: {error}"}, 400)
 
     app.router.routes.extend(assistant.routes)
 

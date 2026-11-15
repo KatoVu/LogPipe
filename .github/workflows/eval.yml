@@ -48,7 +48,7 @@ jobs:
           path: artifacts/datasets/loghub2k
           key: loghub2k-${{ hashFiles('logpipe/eval/datasets.py') }}
       - name: fetch Loghub-2k
-        run: uv run logpipe fetch-data loghub2k
+        run: uv run logpipe eval fetch loghub2k
 
       # Small subset, same params as eval/baseline.json
       - name: parsing GA/PA (Loghub-2k + IoT_fleet, offline masks, untuned Drain)

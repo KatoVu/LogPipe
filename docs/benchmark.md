@@ -1,6 +1,6 @@
 # Benchmark
 
-`logpipe bench` (or `make bench`, or **Benchmark** in the UI) answers "how many logs can one
+`logpipe eval throughput` (or `make bench`, or **Benchmark** in the UI) answers "how many logs can one
 server take?". It starts a fresh server in its own process, calibrated on the synthetic IoT
 fleet, and feeds it through the intake at 500, 1k, 2k, 5k, 10k, 20k, 50k and 100k lines/s,
 10 s per step, until a step falls behind (processed < 95% of offered, or the buffer builds up).

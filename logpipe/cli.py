@@ -4,11 +4,13 @@
 * ``replay``: parse files with the frozen registry only.
 * ``run``: full pipeline (store, enrichment loop, LogBERT detector).
 * ``worker``: learning worker consuming the unresolved queue (Kafka consumer group).
-* ``train-logbert``: train the detector on per-device windows of parsed logs.
+* ``train``: train the LogBERT detector on per-device windows of parsed logs.
 * ``gen-iot``: write the synthetic IoT fleet to disk.
-* ``eval``: ``parsing`` | ``logbert`` | ``iot`` | ``alias`` benchmarks, ``report`` to summarise.
-* ``demo``: browser UI running a live synthetic IoT fleet through every stage.
-* ``start`` (also plain ``logpipe``): ask what to run, start Docker services, run it.
+* ``server``: agent intake, operator UI, learning lifecycle, MCP.
+* ``showcase``: guided tour of the product.
+* ``start``: ask what to run, start Docker services, run it.
+* ``eval``: benchmarks (``parsing`` ``alias`` ``iot`` ``logbert`` ``rca`` ``rcaeval``
+  ``throughput``), ``report``, the CI ``gate`` and ``fetch`` for the datasets.
 """
 
 from __future__ import annotations
@@ -20,8 +22,6 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
-
-from deepparse.ai_scraper.session import BROWSERS
 
 from .calibrate import GroundTruth, calibrate
 from .enrich.llm import get_adapter
@@ -40,7 +40,7 @@ def _calibrate(args: argparse.Namespace) -> None:
         lines = [event.line for event in replay(args.logs)]
     result = calibrate(
         lines,
-        get_adapter(args.llm, browser=args.browser),
+        get_adapter(args.llm),
         sample_size=args.sample,
         ground_truth=truth,
         tune=args.tune,
@@ -117,9 +117,7 @@ def _run(args: argparse.Namespace) -> None:
     pipeline = Pipeline.assemble(
         SchemaRegistry.load(args.registry),
         store,
-        adapter=None
-        if args.no_enrich
-        else dd.traced(get_adapter(args.llm, browser=args.browser), args.llm),
+        adapter=None if args.no_enrich else dd.traced(get_adapter(args.llm), args.llm),
         scorer=LogBERTScorer.load(args.model) if has_model else None,
         detector_config=DetectorConfig(window=args.window, stride=args.stride),
         registry_path=args.registry,
@@ -152,12 +150,12 @@ def _worker(args: argparse.Namespace) -> None:
     registry = SchemaRegistry.load(args.registry)
     handle = ParserHandle(registry.current)
     store = open_store(args.store)
-    queue = open_queue(args.queue)
+    queue = open_queue("kafka")  # a memory queue lives in another process
     worker = EnrichmentWorker(
         registry,
         handle,
         store,
-        _datadog(args).traced(get_adapter(args.llm, browser=args.browser), args.llm),
+        _datadog(args).traced(get_adapter(args.llm), args.llm),
         registry_path=args.registry,
         queue=queue,
         max_buffer=args.batch,
@@ -249,40 +247,6 @@ def _gen_iot(args: argparse.Namespace) -> None:
     print(f"wrote history/validation/test logs and labels.tsv to {args.out}")
 
 
-def _demo(args: argparse.Namespace) -> None:
-    from .demo.server import Demo, save_registry, serve
-
-    if args.raw == ["demo"] and sys.stdin.isatty():  # no flags: ask instead
-        from .start import start
-
-        return start(mode="demo")
-
-    if args.save_registry:
-        save_registry(
-            args.save_registry,
-            devices=args.devices,
-            history_hours=args.history_hours,
-            llm=args.llm,
-            browser=args.browser,
-        )
-        return
-    demo = Demo(
-        devices=args.devices,
-        history_hours=args.history_hours,
-        test_hours=args.test_hours,
-        epochs=args.epochs,
-        enrich_every=args.enrich_every,
-        llm=args.llm,
-        queue=args.queue,
-        store=args.store,
-        registry_path=args.registry,
-        browser=args.browser,
-        cache_dir=Path("artifacts/demo"),
-        recalibrate=args.recalibrate,
-    )
-    serve(demo, args.host, args.port, args.rate)
-
-
 def _showcase(args: argparse.Namespace) -> None:
     from .showcase import run
 
@@ -303,10 +267,6 @@ def _bench(args: argparse.Namespace) -> None:
 
 
 def _server(args: argparse.Namespace) -> None:
-    if args.raw == ["server"] and sys.stdin.isatty():  # no flags: ask instead
-        from .start import start
-
-        return start(mode="server")
     from .server import run
 
     run(
@@ -315,10 +275,8 @@ def _server(args: argparse.Namespace) -> None:
         store=args.store,
         queue=args.queue,
         llm=args.llm,
-        browser=args.browser,
         data_dir=args.data_dir,
         epochs=args.epochs,
-        demo=args.demo,
         datadog=_datadog(args),
         datadog_pull=args.datadog_pull,
     )
@@ -338,6 +296,14 @@ def _fetch_data(args: argparse.Namespace) -> None:
         print(f"{name} -> {path}")
 
 
+def _eval_module(name: str, argv: list[str]) -> None:
+    if name == "rca":
+        from .eval.rca_eval import main as run
+    else:
+        from .eval.rcaeval_bench import main as run
+    run(argv)
+
+
 def _eval(args: argparse.Namespace) -> None:
     out = args.out
     if args.benchmark == "gate":
@@ -352,7 +318,6 @@ def _eval(args: argparse.Namespace) -> None:
             print(f"[gate] baseline written -> {path}")
             return
         raise SystemExit(run_gate(out, args.baseline))
-    adapter = get_adapter(args.llm, browser=args.browser)
     if args.benchmark == "report":
         from .eval.report import write_report
 
@@ -360,7 +325,7 @@ def _eval(args: argparse.Namespace) -> None:
     elif args.benchmark == "parsing":
         from .eval.parsing_eval import run_parsing_eval
 
-        run_parsing_eval(adapter, tune=not args.no_tune, out_dir=out)
+        run_parsing_eval(get_adapter(args.llm), tune=not args.no_tune, out_dir=out)
     elif args.benchmark == "alias":
         from .eval.alias_eval import run_alias_eval
 
@@ -383,13 +348,13 @@ def _eval(args: argparse.Namespace) -> None:
         else:
             sessions = load_bgl(max_lines=args.max_lines)
             cfg = replace(cfg, num_candidates=15)  # LogBERT's BGL setting
-        run_logbert_eval(sessions, adapter, cfg, out_dir=out / args.dataset.lower())
+        run_logbert_eval(sessions, get_adapter(args.llm), cfg, out_dir=out / args.dataset.lower())
     elif args.benchmark == "iot":
         from .anomaly.logbert import TrainConfig
         from .eval.iot_eval import IoTEvalConfig, run_iot_eval
 
         run_iot_eval(
-            adapter,
+            get_adapter(args.llm),
             IoTEvalConfig(
                 devices_per_kind=args.devices,
                 test_hours=args.test_hours,
@@ -402,13 +367,6 @@ def _eval(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     settings = get_settings()
     parser = argparse.ArgumentParser(prog="logpipe")
-    parser.add_argument(
-        "--browser",
-        choices=BROWSERS,
-        default=settings.llm.web_browser,
-        help="browser for LLM backend llm:web:<site>",
-    )
-    parser.set_defaults(func=_start)
     sub = parser.add_subparsers(dest="command")
 
     st = sub.add_parser("start", help="interactive: pick what to run, set up services, run it")
@@ -461,12 +419,11 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--show-alerts", type=int, default=20)
     run.set_defaults(func=_run)
 
-    wk = sub.add_parser("worker", help="learning worker: consume the unresolved queue")
+    wk = sub.add_parser("worker", help="learning worker: consume the Kafka unresolved queue")
     wk.add_argument("--registry", type=Path, default=settings.app.registry_path)
     wk.add_argument(
         "--store", choices=["memory", "clickhouse", "mongodb"], default=settings.app.store
     )
-    wk.add_argument("--queue", choices=["memory", "kafka"], default="kafka")
     wk.add_argument("--llm", default=settings.llm.llm_backend)
     wk.add_argument("--batch", type=int, default=10_000, help="rows per cycle")
     wk.add_argument("--poll", type=float, default=1.0, help="seconds to wait for a batch")
@@ -482,7 +439,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     wk.set_defaults(func=_worker)
 
-    tl = sub.add_parser("train-logbert", help="train LogBERT on per-device windows")
+    tl = sub.add_parser("train", help="train LogBERT on per-device windows")
     tl.add_argument("--logs", type=Path, default=settings.app.logs_path)
     tl.add_argument("--registry", type=Path, default=settings.app.registry_path)
     tl.add_argument("--out", type=Path, default=settings.app.model_path)
@@ -501,50 +458,6 @@ def main(argv: list[str] | None = None) -> None:
     gen.add_argument("--test-hours", type=float, default=6)
     gen.add_argument("--seed", type=int, default=7)
     gen.set_defaults(func=_gen_iot)
-
-    dm = sub.add_parser("demo", help="browser demo of the full pipeline on the synthetic fleet")
-    dm.add_argument("--host", default="127.0.0.1")
-    dm.add_argument("--port", type=int, default=8000)
-    dm.add_argument("--rate", type=float, default=25, help="lines per second to replay")
-    dm.add_argument("--devices", type=int, default=2, help="devices per kind")
-    dm.add_argument("--history-hours", type=float, default=2)
-    dm.add_argument("--test-hours", type=float, default=1)
-    dm.add_argument("--epochs", type=int, default=8)
-    dm.add_argument("--enrich-every", type=int, default=300)
-    dm.add_argument(
-        "--llm",
-        default="offline",
-        help="key naming + alias check (and masks when calibrating), e.g. llm:web:gemini",
-    )
-    dm.add_argument(
-        "--queue",
-        choices=["memory", "kafka"],
-        default="memory",
-        help="unresolved queue; kafka is started in Docker if needed",
-    )
-    dm.add_argument(
-        "--store",
-        choices=["memory", "clickhouse", "mongodb"],
-        default="memory",
-        help="clickhouse also writes every row there (started in Docker if needed)",
-    )
-    dm.add_argument(
-        "--registry",
-        type=Path,
-        help="load a saved registry (e.g. fine-tuned masks from Colab) instead of calibrating",
-    )
-    dm.add_argument(
-        "--recalibrate",
-        action="store_true",
-        help="redo the calibration cached in artifacts/demo/ (kept per mask backend and fleet size)",
-    )
-    dm.add_argument(
-        "--save-registry",
-        type=Path,
-        metavar="PATH",
-        help="calibrate the demo history with --llm, save the registry and exit (Colab: --llm hf)",
-    )
-    dm.set_defaults(func=_demo)
 
     sv = sub.add_parser("server", help="agent intake + operator UI (React) + learning lifecycle")
     sv.add_argument("--host", default="0.0.0.0")
@@ -569,7 +482,6 @@ def main(argv: list[str] | None = None) -> None:
         help="registry and per-stream LogBERT models",
     )
     sv.add_argument("--epochs", type=int, default=8, help="LogBERT epochs per stream")
-    sv.add_argument("--demo", action="store_true", help="also run the developer demo at /demo/")
     sv.set_defaults(func=_server)
 
     sc = sub.add_parser(
@@ -589,8 +501,52 @@ def main(argv: list[str] | None = None) -> None:
     )
     sc.set_defaults(func=_showcase)
 
-    bn = sub.add_parser(
-        "bench", help="how many lines/s one server keeps up with, its CPU and memory"
+    ev = sub.add_parser("eval", help="benchmarks, their datasets, the report and the CI gate")
+    evs = ev.add_subparsers(dest="benchmark", required=True, metavar="benchmark")
+
+    def benchmark(name: str, help: str, *, llm: bool = False) -> argparse.ArgumentParser:
+        p = evs.add_parser(name, help=help)
+        p.add_argument("--out", type=Path, default=Path("artifacts/eval"))
+        if llm:
+            p.add_argument("--llm", default=settings.llm.llm_backend)
+        p.set_defaults(func=_eval)
+        return p
+
+    def training(p: argparse.ArgumentParser, epochs: int = 30) -> None:
+        p.add_argument("--epochs", type=int, default=epochs)
+        p.add_argument("--threads", type=int, default=None)
+
+    benchmark("parsing", "GA/PA on Loghub-2k vs. DeepParse", llm=True).add_argument(
+        "--no-tune", action="store_true", help="fixed Drain depth/similarity"
+    )
+    benchmark("alias", "alias decisions on labelled template pairs")
+    e = benchmark("iot", "synthetic fleet end to end, with ablations", llm=True)
+    e.add_argument("--devices", type=int, default=5)
+    e.add_argument("--test-hours", type=float, default=6)
+    training(e)
+    e = benchmark("logbert", "LogBERT on an HDFS or BGL subset", llm=True)
+    e.add_argument("--dataset", choices=["HDFS", "BGL"], default="HDFS")
+    e.add_argument("--normal", type=int, default=20_000, help="HDFS normal sessions")
+    e.add_argument("--abnormal", type=int, default=2_000, help="HDFS abnormal sessions")
+    e.add_argument("--max-lines", type=int, default=1_000_000, help="BGL lines")
+    training(e)
+    benchmark("report", "summarise --out into REPORT.md")
+    e = benchmark("gate", "compare --out with the committed baseline (the nightly CI check)")
+    e.add_argument("--baseline", type=Path, default=Path("eval/baseline.json"))
+    e.add_argument(
+        "--write-baseline",
+        action="store_true",
+        help="record the current results as the new baseline instead of checking",
+    )
+    # Their own parsers; everything after the name is passed through (`-h` too).
+    for name, help in (
+        ("rca", "root cause on 15 faults injected into a generated web shop"),
+        ("rcaeval", "root cause on RCAEval cases (TASKS_DIR from rcaeval-agent export)"),
+    ):
+        evs.add_parser(name, help=help, add_help=False).set_defaults(func=_eval_module)
+
+    bn = evs.add_parser(
+        "throughput", help="how many lines/s one server keeps up with, its CPU and memory"
     )
     bn.add_argument(
         "--store",
@@ -607,7 +563,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     bn.set_defaults(func=_bench)
 
-    fd = sub.add_parser("fetch-data", help="download the evaluation datasets up front")
+    fd = evs.add_parser("fetch", help="download the evaluation datasets up front")
     fd.add_argument(
         "datasets",
         nargs="*",
@@ -616,32 +572,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     fd.set_defaults(func=_fetch_data)
 
-    ev = sub.add_parser("eval", help="run a benchmark")
-    ev.add_argument("benchmark", choices=["parsing", "logbert", "iot", "alias", "report", "gate"])
-    ev.add_argument("--out", type=Path, default=Path("artifacts/eval"))
-    ev.add_argument(
-        "--baseline",
-        type=Path,
-        default=Path("eval/baseline.json"),
-        help="gate: committed numbers to compare against",
-    )
-    ev.add_argument(
-        "--write-baseline",
-        action="store_true",
-        help="gate: record the current results as the new baseline instead of checking",
-    )
-    ev.add_argument("--llm", default=settings.llm.llm_backend)
-    ev.add_argument("--no-tune", action="store_true")
-    ev.add_argument("--dataset", choices=["HDFS", "BGL"], default="HDFS")
-    ev.add_argument("--normal", type=int, default=20_000)
-    ev.add_argument("--abnormal", type=int, default=2_000)
-    ev.add_argument("--max-lines", type=int, default=1_000_000)
-    ev.add_argument("--devices", type=int, default=5)
-    ev.add_argument("--test-hours", type=float, default=6)
-    ev.add_argument("--epochs", type=int, default=30)
-    ev.add_argument("--threads", type=int, default=None)
-    ev.set_defaults(func=_eval)
-
     for p in (run, wk, sv):
         p.add_argument(
             "--datadog",
@@ -649,8 +579,18 @@ def main(argv: list[str] | None = None) -> None:
             help="send metrics, logs and LLM spans to a Datadog Agent (needs the `datadog` extra)",
         )
 
-    args = parser.parse_args(argv)
-    args.raw = sys.argv[1:] if argv is None else argv
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["train-logbert"]:  # the old name, kept working but not listed
+        argv[0] = "train"
+    args, extra = parser.parse_known_args(argv)
+    if args.command is None:
+        parser.print_help()
+        print("\nNew here? `logpipe start` asks what to run and sets it up.")
+        return
+    if getattr(args, "func", None) is _eval_module:
+        return _eval_module(args.benchmark, extra)
+    if extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     args.func(args)
 
 

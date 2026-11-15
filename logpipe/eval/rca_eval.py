@@ -1,4 +1,4 @@
-"""Root-cause eval on injected faults (``python -m logpipe.eval.rca_eval``).
+"""Root-cause eval on injected faults (``logpipe eval rca``).
 
 One ``logpipe server`` (memory store) learns a web shop's normal traffic, then each fault from
 :data:`~logpipe.showcase.generator.FAULTS` is injected into its own time slot, after an hour of
@@ -329,7 +329,7 @@ def table(summary: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog="logpipe eval rca", description=__doc__.split("\n\n")[0])
     ap.add_argument("--modes", nargs="*", help="faults to inject (default: all)")
     ap.add_argument("--out", type=Path, default=Path("artifacts/eval/rca.json"))
     ap.add_argument("--epochs", type=int, default=4)

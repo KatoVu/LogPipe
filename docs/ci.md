@@ -28,7 +28,7 @@ proves the service wiring; tests of the ClickHouse storage backend go under the 
 
 Runs at 02:00 Asia/Ho_Chi_Minh, on every push to `main`, and by hand (Actions → "Nightly eval gate" → Run workflow).
 
-1. `logpipe fetch-data loghub2k` (cached on the hash of `logpipe/eval/datasets.py`)
+1. `logpipe eval fetch loghub2k` (cached on the hash of `logpipe/eval/datasets.py`)
 2. `logpipe eval parsing --no-tune` (GA/PA on 14 Loghub-2k systems + IoT_fleet, offline masks, Drain depth 5 / sim 0.4)
 3. `logpipe eval alias` (28 labelled template pairs)
 4. `logpipe eval iot --epochs 3 --devices 3 --test-hours 2` (reduced end-to-end fleet run, about 80 s)
@@ -59,6 +59,13 @@ git add eval/baseline.json
 
 Or run the workflow by hand with "write_baseline" ticked and copy `baseline.json` out of the uploaded artifact.
 Keep the IoT parameters identical to `eval_params` in the baseline; the F1 of a 3-epoch run is not comparable with a 30-epoch one.
+
+## Agent release (`.github/workflows/agent-release.yml`)
+
+Pushing a `v*` tag builds `logpipe-agent` for Linux (amd64, arm64, armv7) and macOS (amd64,
+arm64) and attaches the binaries, their sha256 checksums and `agent/install.sh` to the GitHub
+release, which is what `install.sh` downloads. A PR that touches `agent/`, or a manual run,
+builds the same files as workflow artifacts without publishing anything.
 
 ## Repository hygiene
 
