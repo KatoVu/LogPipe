@@ -120,14 +120,15 @@ class Tour:
         for line in lines:
             print(f"  {line}")
 
-    def say(self, text: str, style: str = D, indent: int = 4, wrap: bool = False) -> None:
-        """A line of output under the current act (cut to the terminal, or ``wrap``ped);
-        clears a counter line first."""
+    def say(self, text: str, style: str = D, indent: int = 4) -> None:
+        """A line of output under the current act, wrapped to the terminal at spaces only, so a
+        link is never cut or split (one longer than the line just runs on); clears a counter line first."""
         if self._live:
             print("\r\033[K", end="")
             self._live = ""
         width = shutil.get_terminal_size((100, 24)).columns - indent - 1
-        for line in textwrap.wrap(text, width) if wrap else [_fit(text, indent)]:
+        lines = textwrap.wrap(text, width, break_long_words=False, break_on_hyphens=False)
+        for line in lines or [""]:
             print(f"{' ' * indent}{style}{line}{R}", flush=True)
 
     def live(self, text: str) -> None:
@@ -175,7 +176,7 @@ class Tour:
             if time.monotonic() - start > timeout:
                 if not give_up:
                     raise SystemExit(f"gave up waiting: {what}")
-                self.say(give_up, Y, 2, wrap=True)
+                self.say(give_up, Y, 2)
                 return
             if live:
                 self.live(_ask(live, "server busy, still waiting"))
@@ -198,7 +199,7 @@ class Tour:
                 reason = e.reason
             if self.auto:
                 raise SystemExit(f"the server refused it: {reason}") from None
-            self.say(f"the server refused it: {reason}; press Enter to try again", Y, 2, wrap=True)
+            self.say(f"the server refused it: {reason}; press Enter to try again", Y, 2)
             return False
 
     def pause(self, text: str = "press Enter for the next act") -> None:
@@ -484,7 +485,6 @@ def _tour(
         ),
         style=G,
         indent=2,
-        wrap=True,
     )
     print(f"  alias lpa={shlex.quote(shlex.join(lpa))}")
     for svc in shop:
@@ -688,7 +688,6 @@ def _tour(
             f"Same event as… → #{old['template_id']} (payment … authorized).",
             Y,
             2,
-            wrap=True,
         )
 
         def link() -> None:
@@ -716,7 +715,6 @@ def _tour(
         "Linked lines count as the old event: the shop-api model needs no retrain and raises no alert for the change.",
         D,
         2,
-        wrap=True,
     )
     t.pause()
 
@@ -880,12 +878,11 @@ def _ask_act(t: Tour, api: Api) -> None:
                 f"broke at {anchor.get('at', '')[11:19]} UTC: {anchor.get('why', '')}",
                 G,
                 2,
-                wrap=True,
             )
         for i, h in enumerate((answer.get("hypotheses") or answer.get("leads") or [])[:3], 1):
-            t.say(f"{i}. {h['cause']}  [{', '.join(h['cites'])}]", G, 4, wrap=True)
+            t.say(f"{i}. {h['cause']}  [{', '.join(h['cites'])}]", G, 4)
         if answer.get("insufficient_evidence"):
-            t.say(f"not enough evidence: {answer.get('missing', '')}", Y, 2, wrap=True)
+            t.say(f"not enough evidence: {answer.get('missing', '')}", Y, 2)
     t.pause()
 
 
@@ -924,9 +921,11 @@ def _dd_connected(t: Tour, dd: ShowcaseDatadog) -> None:
 
 def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
     t.say(
-        "logpipe posts the incident to Datadog as an event, and its root-cause analysis after it. "
-        "The analysis's queries wait for approval (Anomaly alerts → the incident), as every Ask does.",
-        wrap=True,
+        "logpipe posts the incident to Datadog as an event, then starts a root-cause analysis by "
+        "itself (no approval needed: the Datadog integration runs it unattended) and posts its "
+        "answer as a second event. Nothing to click; watch it in the UI under Anomaly alerts → "
+        "the incident → Investigation. Each LLM step takes a while (a browser chat like Gemini "
+        "about half a minute), so this can take a few minutes.",
     )
     t.say(dd.links["events"])
     t.wait(
@@ -935,14 +934,42 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
         timeout=180,
         give_up="no event yet; see the server output.",
     )
+    live, steps = _rca_progress(t.api)
     t.wait(
         "its root cause posted to Datadog",
         lambda: dd.event(f"logpipe RCA: {HOST}"),
-        lambda: _approve_until(t.api, lambda: dd.event(f"logpipe RCA: {HOST}")),
-        timeout=300,
-        give_up="not posted yet; approve its rounds on the incident.",
+        timeout=600,
+        live=live,
+        steps=steps,
+        give_up="not posted yet; the analysis is still on the incident page, and posts when done.",
     )
     t.say(f"Each LLM step of that analysis, with prompts and tokens: {dd.links['llm']}")
+
+
+def _rca_progress(api: Api) -> tuple[Callable[[], str], Callable[[], list[str]]]:
+    """The incident analysis's progress: a live line, and each LLM step once it finishes."""
+    printed: set[str] = set()
+
+    def plan() -> dict | None:
+        return next((p for p in api("/api/ask")["plans"] if p.get("incident")), None)
+
+    def live() -> str:
+        p = plan()
+        if p is None:
+            return "starting the analysis"
+        running = next((s for s in p.get("llm_steps") or [] if s["status"] == "running"), None)
+        doing = f", waiting for the LLM: {running['step']}" if running else ""
+        return f"analysis {p['status']}, round {len(p['rounds'])}{doing}"
+
+    def steps() -> list[str]:
+        p, out = plan(), []
+        for i, s in enumerate((p or {}).get("llm_steps") or []):
+            if s["status"] != "running" and (key := f"{p['id']}:{i}") not in printed:
+                printed.add(key)
+                out.append(f"LLM {s['step']}: {s['status']} in {round(s.get('seconds') or 0)} s")
+        return out
+
+    return live, steps
 
 
 def _dd_export(t: Tour, dd: ShowcaseDatadog) -> None:
