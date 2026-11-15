@@ -919,6 +919,16 @@ def _ask_act(t: Tour, api: Api) -> None:
     t.pause()
 
 
+# What the Datadog steps wait on, from a showcase run with Gemini in the browser: the analysis took
+# 15-40 s (its LLM call 14-27 s), and logpipe posted the event 1-45 s after (it posts every 15 s).
+# Datadog's search then lags behind its intake; that part wasn't measured.
+DD_WAIT = (
+    "Datadog takes a while: the analysis takes about 15-40 s with Gemini in the browser (its LLM "
+    "call 14-27 s), logpipe posts the result within about 45 s, and Datadog's search can take "
+    "another minute or two to show it. Expect 1-3 minutes; nothing is stuck."
+)
+
+
 def _dd_connected(t: Tour, dd: ShowcaseDatadog) -> None:
     t.act(
         "1b",
@@ -930,6 +940,8 @@ def _dd_connected(t: Tour, dd: ShowcaseDatadog) -> None:
             f"Dashboard: {dd.links['dashboard']}",
             f"Monitors:  {dd.links['monitors']}",
             f"Every request it serves is traced: the Service Map draws what it calls, {dd.links['map']}",
+            "Nothing to do here. The Agent ships logs every few seconds, but Datadog can take a",
+            "minute or two to show the first ones in search.",
         ],
     )
     since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(dd.started))
@@ -947,9 +959,9 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
         "logpipe posts the incident to Datadog as an event, then starts a root-cause analysis by "
         "itself (no approval needed: the Datadog integration runs it unattended) and posts its "
         "answer as a second event. Nothing to click; watch it in the UI under Anomaly alerts → "
-        "the incident → Investigation. Each LLM step takes a while (a browser chat like Gemini "
-        "about half a minute), so this can take a few minutes.",
+        "the incident → Investigation.",
     )
+    t.say(DD_WAIT, Y)
     t.say(dd.links["events"])
     t.wait(
         "the anomaly event in Datadog",
@@ -1027,10 +1039,10 @@ def _dd_webhook(t: Tour, dd: ShowcaseDatadog, token: str) -> None:
             f"I'll send what one would: {B}[Triggered] shop-api error rate is high{R}.",
             "logpipe analyses the logs around that moment and posts the answer back as an event.",
             f"{B}Nothing to do here:{R} I send it now, and the analysis runs by itself (no approval:",
-            "a webhook runs unattended). Each LLM step takes a while (a browser chat like Gemini",
-            "about half a minute), so the answer can take a few minutes.",
+            "a webhook runs unattended).",
         ],
     )
+    t.say(DD_WAIT, Y)
     title = "logpipe RCA: [Triggered]"
     plan_id = dd.webhook(t.url, token, "shop-api")
     t.say(f"sent; analysis {plan_id} started")
