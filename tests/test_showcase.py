@@ -148,3 +148,17 @@ def test_fresh_volumes_removes_only_the_started_services_data(monkeypatch):
     ]
     assert calls[1] == ["docker", "compose", "rm", "--stop", "--force", "kafka", "mongo"]
     assert calls[2] == ["docker", "volume", "rm", "--force", "proj_kafka_data", "proj_mongo_data"]
+
+
+def test_host_zone_from_localtime(tmp_path, monkeypatch):
+    from logpipe.showcase import host_zone
+
+    zone = tmp_path / "usr/share/zoneinfo/Asia/Singapore"
+    zone.parent.mkdir(parents=True)
+    zone.write_text("")
+    (tmp_path / "localtime").symlink_to(zone)
+    monkeypatch.delenv("TZ", raising=False)
+    assert host_zone(str(tmp_path / "localtime")) == "Asia/Singapore"
+    assert host_zone(str(tmp_path / "missing")) is None
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    assert host_zone(str(tmp_path / "missing")) == "Europe/Paris"

@@ -72,6 +72,14 @@ def need_docker() -> None:
 VOLUMES = {"clickhouse": "clickhouse_data", "mongo": "mongo_data", "kafka": "kafka_data"}
 
 
+def host_zone(localtime: str = "/etc/localtime") -> str | None:
+    """This machine's IANA zone (e.g. Asia/Singapore), or None when it can't be told (Windows)."""
+    if "/" in (tz := os.environ.get("TZ", "").lstrip(":")):
+        return tz
+    _, found, name = os.path.realpath(localtime).partition("zoneinfo/")
+    return name if found and name else None
+
+
 def fresh_volumes(services: list[str], run: Callable = subprocess.run) -> list[str]:
     """Stop ``services`` and delete their data volumes, so the showcase starts from nothing.
 
@@ -413,6 +421,9 @@ def _tour(
         ["-e", f"LOGPIPE_ENDPOINT={url.replace('localhost', 'host.docker.internal')}"],
         ["-e", f"LOGPIPE_API_KEY={token}"],
         ["-e", f"LOGPIPE_HOSTNAME={HOST}"],
+        # the shop writes zone-less local times; the agent sends its offset with each line, and a
+        # container's clock is UTC unless told otherwise, which put shop-api 8 h ahead at UTC+8
+        *([["-e", f"TZ={zone}"]] if (zone := host_zone()) else []),
         ["-v", f"{logs}:{logs}:ro"],  # same path inside, so track takes the host's paths
         [IMAGE],
     ]  # fmt: skip
