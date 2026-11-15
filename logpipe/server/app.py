@@ -635,6 +635,10 @@ def create_app(server: Server, demo: Any = None, info: dict | None = None) -> Fa
             incident_id, status, str(body.get("note") or ""), caller(request)
         )
 
+    @app.post("/api/incidents/{incident_id}/comments")
+    def comment_incident(request: Request, incident_id: str, body: Annotated[dict, Body()]) -> dict:
+        return server.comment_incident(incident_id, str(body.get("text") or ""), caller(request))
+
     @app.post("/api/incidents/{incident_id}/explain", status_code=202)
     def explain_incident(incident_id: str, body: Annotated[dict | None, Body()] = None) -> dict:
         return server.explain_incident(incident_id, ask_flag(body or {}))

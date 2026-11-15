@@ -958,6 +958,18 @@ def test_incidents_group_alerts_explain_lines_and_learn_false_positives(env):
     assert [i["note"] for i in fp] == ["nightly batch"]
     assert client.put(f"/api/incidents/{iid}", json={"status": "nope"}).status_code == 400
     assert client.get("/api/incidents/missing").status_code == 404
+    # status changes and comments share one timeline, oldest first
+    assert client.post(f"/api/incidents/{iid}/comments", json={"text": "  "}).status_code == 400
+    assert client.post("/api/incidents/missing/comments", json={"text": "x"}).status_code == 404
+    client.post(f"/api/incidents/{iid}/comments", json={"text": "batch runs at 02:00"})
+    client.put(
+        f"/api/incidents/{iid}", json={"status": "false_positive", "note": "same"}
+    )  # no change: no entry
+    act = client.get(f"/api/incidents/{iid}").json()["activity"]
+    assert [(a["kind"], a.get("status"), a["text"]) for a in act] == [
+        ("status", "false_positive", "nightly batch"),
+        ("comment", None, "batch runs at 02:00"),
+    ]
 
 
 def test_firmware_changes_a_variable_is_linked_by_itself_a_rewording_needs_the_llm(env):
