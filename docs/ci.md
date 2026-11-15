@@ -60,6 +60,13 @@ git add eval/baseline.json
 Or run the workflow by hand with "write_baseline" ticked and copy `baseline.json` out of the uploaded artifact.
 Keep the IoT parameters identical to `eval_params` in the baseline; the F1 of a 3-epoch run is not comparable with a 30-epoch one.
 
+## Agent release (`.github/workflows/agent-release.yml`)
+
+Pushing a `v*` tag builds `logpipe-agent` for Linux (amd64, arm64, armv7) and macOS (amd64,
+arm64) and attaches the binaries, their sha256 checksums and `agent/install.sh` to the GitHub
+release, which is what `install.sh` downloads. A PR that touches `agent/`, or a manual run,
+builds the same files as workflow artifacts without publishing anything.
+
 ## Repository hygiene
 
 - **Branch protection on `main`** (needs admin on `KatoVu/LogPipe`; the ruleset is not a file in the repo):

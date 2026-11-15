@@ -19,9 +19,10 @@ uv run logpipe showcase           # asks store and LLM; --no-ask for memory + of
 uv run logpipe showcase --auto    # does every act itself
 ```
 
-It starts the server, a generated web shop's logs (nginx, a Java API with stack traces,
-Postgres) and a real `logpipe-agent` built from `agent/` (run as you, no sudo). Then it walks
-through eight acts: connect the agent, draft templates, review them and write a parsing rule,
+It starts the server and a generated web shop's logs (nginx, a Java API with stack traces,
+Postgres). Then it walks through eight acts: start a real `logpipe-agent` container and track the
+files (it prints the `docker run` and `track` commands for you to run), draft templates, review
+them and write a parsing rule,
 calibrate and train, explore, a payment-gateway outage that LogBERT flags, and a new service
 whose templates are drafted for review automatically. Each act waits for you to do it in the
 UI; Enter lets it do the act instead. Files go to `artifacts/showcase/`.
@@ -48,8 +49,8 @@ cd web && npm ci && npm run dev                # UI dev server on :5173, proxies
 cd agent && go build -o logpipe-agent . && ./logpipe-agent -h
 ```
 
-Install an agent on a real host: [Install the agent](agent.md) (container or Go binary, no root
-needed). Anything that speaks OTLP/HTTP logs can send to `POST /v1/logs` too.
+Install an agent on a real host: [Install the agent](agent.md) (container, release binary via `install.sh`, or
+a Go build; no root needed). Anything that speaks OTLP/HTTP logs can send to `POST /v1/logs` too.
 [Server and learning lifecycle →](../agent-platform.md)
 
 ## 4. Batch: a directory of log files

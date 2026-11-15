@@ -26,6 +26,7 @@ make typecheck                       # pyright
 |---|---|---|
 | A benchmark improves on purpose | refresh the gate baseline | `make data-loghub`, run the three reduced evals, `logpipe eval gate --write-baseline`, commit `eval/baseline.json` ([CI](../ci.md#refreshing-the-baseline)) |
 | A prompt changes | re-record LLM replies | `logpipe eval rca --llm … --record …`; replays fail loudly on unseen prompts |
+| An agent change ships | cut a release | push a `v*` tag; `agent-release.yml` publishes the binaries `install.sh` fetches ([CI](../ci.md#agent-release-githubworkflowsagent-releaseyml)) |
 | Dependabot PR | review and merge | weekly uv (root + `DeepParse/`) and Actions updates, grouped minor + patch |
 | A web chat site breaks | fix selectors | [Web chat: when a site changes](../getting-started/web-chat.md#when-a-site-changes) |
 | The mask model drifts | retrain on a GPU | `make retrain-data HOLDOUT=…`, `notebooks/colab_retrain.ipynb`, then `make retrain-eval MASKS=…` |

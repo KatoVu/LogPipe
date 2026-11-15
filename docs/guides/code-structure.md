@@ -86,7 +86,9 @@ LogPipe/
 
 | Path | Responsibility |
 |---|---|
-| `main.go` | CLI: `init`, `run`, `track` / `untrack` / `list`, `config get\|set\|edit\|show\|path`, `status`, `check`, `version` |
+| `main.go` | CLI: `init`, `run`, `track` / `untrack` / `list`, `config get\|set\|edit\|show\|path`, `status`, `check`, `service install\|uninstall`, `version` |
+| `service.go` | `service install` / `uninstall`: a systemd unit or launchd plist that runs the agent at boot |
+| `install.sh` | downloads the release binary for this OS/arch and checks its sha256 |
 | `internal/config` | `agent.yaml` + `conf.d/*.yaml` (Datadog layout), remote config |
 | `internal/source` | tail files (with rotation and offsets), journald, docker socket, syslog |
 | `internal/process` | multiline aggregation, then exclude / include / mask rules in written order |

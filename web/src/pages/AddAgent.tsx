@@ -19,9 +19,11 @@ export function installCommands(token: string) {
       "  ghcr.io/katovu/logpipe-agent:latest",
     ].join("\n"),
     binary: [
+      "curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh",
+      'export PATH="$HOME/.local/bin:$PATH"',
       `logpipe-agent init --endpoint ${endpoint} --api-key ${token}`,
       "logpipe-agent track '/var/log/myapp/*.log' --service myapp --auto-multiline",
-      "logpipe-agent check && logpipe-agent run",
+      "logpipe-agent check && logpipe-agent service install",
     ].join("\n"),
   };
 }
@@ -74,24 +76,52 @@ export function InstallStep({ token }: { token: string }) {
         <button type="button" className={how === "binary" ? "on" : ""} aria-pressed={how === "binary"} onClick={() => setHow("binary")}>Binary</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>Run this on the host whose logs you want.
-        {how === "docker" ? " It reads /var/log and container output." : " No sudo needed; your user must be able to read the files (e.g. be in the adm group)."}</p>
+        {how === "docker" ? " It reads /var/log and container output. For journald, add -v /etc/machine-id:/etc/machine-id:ro." : " Installs the binary for Linux or macOS to ~/.local/bin; no sudo needed. Your user must be able to read the files (e.g. be in the adm group)."}</p>
       <CopyBlock text={cmds[how]} />
     </div>
   );
 }
 
+/** How to get a host connected, and what to check when it doesn't show up. */
+export function ConnectHelp({ token }: { token: string }) {
+  const origin = window.location.origin;
+  const local = /^(localhost|127\.|\[::1\]$)/.test(window.location.hostname);
+  return (
+    <div className="stack small">
+      <ol style={{ margin: 0, paddingLeft: 18 }}>
+        <li>Run the install command on the host. Docker starts it in the background; for the binary, <code>service install</code> does.</li>
+        <li>The agent connects to <code>{origin}</code> with your key and shows up here within a second.</li>
+        <li>Nothing yet? Test the address and key from the host. <code>{"{\"ok\": true, …}"}</code> means both work:</li>
+      </ol>
+      <CopyBlock text={`curl -fsS -H "X-API-Key: ${token || "<your API key>"}" ${origin}/intake/v1/ping`} />
+      {local && (
+        <div className="callout warn"><div className="grow">
+          You opened this page on <code>{window.location.hostname}</code>, so the commands point at <code>{origin}</code>. Other hosts and containers can't reach that:
+          use this server's IP or name instead (e.g. <code>http://192.168.1.10:8080</code>). For Docker on this same machine, add <code>--network host</code>: that works as is with Docker Engine on Linux; Docker Desktop (macOS, Windows) needs version 4.34+ with host networking turned on under Settings → Resources → Network.
+        </div></div>
+      )}
+      <details>
+        <summary>Still not connecting?</summary>
+        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          <li><strong>401</strong>: the key is wrong or revoked. Create a new one in the first step.</li>
+          <li><strong>Connection refused or timeout</strong>: the URL is wrong, or a firewall blocks the port.</li>
+          <li>Binary: <code>logpipe-agent check</code> tests the config, the files and the server; <code>logpipe-agent status</code> shows send errors.</li>
+          <li>Docker: <code>docker logs logpipe-agent</code>.</li>
+        </ul>
+      </details>
+    </div>
+  );
+}
+
 /** Watches for a host that wasn't connected when this opened. */
-export function WaitStep({ known, onOpen }: { known: Set<string>; onOpen?: () => void }) {
+export function WaitStep({ known, token = "", onOpen }: { known: Set<string>; token?: string; onOpen?: () => void }) {
   const { data } = usePoll<{ agents: Agent[] }>("/api/agents", 2000);
   const fresh = data?.agents.filter((a) => !known.has(a.hostname) && a.online) ?? [];
   if (!fresh.length) {
     return (
-      <div className="waiting" role="status">
-        <span className="spin" aria-hidden="true" />
-        <div>
-          <strong>Waiting for the agent to connect…</strong>
-          <div className="muted small">It appears here the moment it starts. Nothing yet? Run <code>logpipe-agent check</code> on the host (or <code>docker logs logpipe-agent</code>).</div>
-        </div>
+      <div className="stack">
+        <div className="waiting" role="status"><span className="spin" aria-hidden="true" /><div><strong>Waiting for the agent to connect…</strong></div></div>
+        <ConnectHelp token={token} />
       </div>
     );
   }
@@ -123,7 +153,7 @@ export function AddAgentDrawer({ onClose }: { onClose: () => void }) {
         <div className="wizard-body">
           {step === 0 && <KeyStep token={token} onToken={setToken} />}
           {step === 1 && <InstallStep token={token} />}
-          {step === 2 && <WaitStep known={known.current ?? new Set()} onOpen={onClose} />}
+          {step === 2 && <WaitStep known={known.current ?? new Set()} token={token} onOpen={onClose} />}
         </div>
         <div className="wizard-foot">
           {step > 0 ? <button className="btn" onClick={() => setStep(step - 1)}>Back</button> : <span />}
