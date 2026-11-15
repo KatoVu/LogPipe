@@ -1,6 +1,6 @@
 // Query: ask in plain English, build a question in three plain steps (what to show, which lines,
 // one row per what), or write SQL. Saved queries sit in a menu; the schema list shows on the SQL tab.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type QueryResult } from "../api";
@@ -337,6 +337,95 @@ export function ResultView({ r, ran, onDrill, busy, actions }: { r?: QueryResult
   );
 }
 
+/** True on screens wide enough for the column reference beside the editor. */
+function useWide(query = "(min-width: 861px)") {
+  const [wide, setWide] = useState(() => typeof matchMedia === "undefined" || matchMedia(query).matches);
+  useEffect(() => {
+    const m = matchMedia(query);
+    const on = () => setWide(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, [query]);
+  return wide;
+}
+
+const SQL_TRY = ["Latest errors", "Errors by service", "Volume over time", "Busiest hosts", "Most common lines"];
+
+/** Write SQL with working examples to start from and the columns one click away. */
+function SqlEditor({ sql, setSql, schema, onRun, running }: { sql: string; setSql: (s: string) => void; schema?: Schema; onRun: (q: string) => void; running: boolean }) {
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const wide = useWide();
+  const table = schema?.table ?? "logs";
+  const example = useAction((name: string) => api<{ sql: string }>("/api/query/build", { method: "POST",
+    json: { ...EMPTY, ...PRESETS.find(([n]) => n === name)![1] } }));
+  const tryIt = (name: string) => example.mutate(name, { onSuccess: (r) => { setSql(r.sql); onRun(r.sql); } });
+  // at the cursor (or over the selection), not at the end
+  const insert = (text: string) => {
+    const el = ta.current;
+    if (!sql.trim()) { setSql(`SELECT ${text}\nFROM ${table}\nLIMIT 100`); return; }
+    const a = el?.selectionStart ?? sql.length, b = el?.selectionEnd ?? sql.length;
+    const pad = a > 0 && !/[\s(]/.test(sql[a - 1]) ? " " : "";
+    setSql(sql.slice(0, a) + pad + text + sql.slice(b));
+    requestAnimationFrame(() => { el?.focus(); const at = a + pad.length + text.length; el?.setSelectionRange(at, at); });
+  };
+  const reference = schema && (
+    <>
+      <ul className="sql-cols">
+        {schema.columns.map((c) => {
+          const name = c.name === "level (computed)" ? "level" : c.name;
+          return <li key={c.name}><button type="button" title={`${c.about}. Click to insert at the cursor.`} onClick={() => insert(name)}>
+            <code>{name}</code><span className="muted small ellipsis">{c.about}</span></button></li>;
+        })}
+      </ul>
+      {schema.fields.length > 0 && <>
+        <div className="sql-ref-title">Extracted fields</div>
+        <p className="muted small" style={{ margin: "0 0 6px" }}>Read from <code>payload</code>; click to insert the expression.</p>
+        <div className="row" style={{ gap: 4 }}>
+          {schema.fields.map((f) => <button key={f} type="button" className="chip-btn" title={schema.payload_access.replace("name", f)}
+            onClick={() => insert(schema.payload_access.replace("name", f))}>@{f}</button>)}
+        </div>
+      </>}
+    </>
+  );
+  return (
+    <div className="sql">
+      <div className="qb-try">
+        <span className="muted small">Try</span>
+        {SQL_TRY.map((name) => <button key={name} type="button" className="link-btn small" disabled={example.isPending} onClick={() => tryIt(name)}>{name}</button>)}
+        {sql && <button type="button" className="link-btn small qb-reset" onClick={() => { setSql(""); ta.current?.focus(); }}>Clear</button>}
+      </div>
+      <div className="sql-body">
+        <form className="sql-main" onSubmit={(e) => { e.preventDefault(); if (sql.trim()) onRun(sql); }}>
+          <textarea ref={ta} rows={9} className="mono sql-input" value={sql} spellCheck={false} aria-label="SQL query"
+            placeholder={`SELECT service, count(*) AS lines\nFROM ${table}\nGROUP BY service\nORDER BY lines DESC`}
+            onChange={(e) => setSql(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (sql.trim()) onRun(sql); } }} />
+          <div className="row">
+            <button className="btn primary" disabled={!sql.trim() || running}>{running ? <><span className="spin" aria-hidden="true" />Running…</> : "Run"}</button>
+            <span className="muted small"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> runs it · read-only · up to 500 rows</span>
+          </div>
+        </form>
+        {wide
+          ? <aside className="sql-ref" aria-label={`Columns of ${table}`}><div className="sql-ref-title">Columns of <code>{table}</code></div>{reference}</aside>
+          : <details className="sql-ref"><summary className="sql-ref-title">Columns and fields of <code>{table}</code></summary>{reference}</details>}
+      </div>
+    </div>
+  );
+}
+
+/** Name a query and keep it under Saved. */
+function SavePop({ name, setName, onSave, pending, error }: { name: string; setName: (s: string) => void; onSave: (done: () => void) => void; pending: boolean; error?: Error | null }) {
+  return (
+    <Pop className="ghost" label="Save" title="Save this query">{(close) => (
+      <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); onSave(close); }}>
+        <div className="pop-title">Name it to find it under Saved</div>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Checkout errors" aria-label="Query name" />
+        {error && <span className="error-text small">{error.message}</span>}
+        <div className="row"><button className="btn small primary" disabled={!name.trim() || pending}>Save</button></div>
+      </form>)}
+    </Pop>
+  );
+}
+
 export default function Query() {
   const [params, setParams] = useSearchParams();
   const schema = usePoll<Schema>("/api/query/schema", 60000).data;
@@ -351,7 +440,6 @@ export default function Query() {
   const [spec, setSpec] = useState<Spec>(START);
   const [sql, setSql] = useState(params.get("sql") ?? "");
   const [name, setName] = useState("");
-  const [naming, setNaming] = useState(false);
   const build = useAction((s: Spec) => api<{ sql: string; result: QueryResult }>("/api/query/build", { method: "POST", json: s }));
   const run = useAction((q: string) => api<QueryResult>("/api/query", { method: "POST", json: { sql: q } }));
   const save = useAction(() => api("/api/queries", { method: "POST", json: { name, sql: tab === "builder" ? build.data?.sql : sql, spec: tab === "builder" ? spec : null } }));
@@ -374,7 +462,7 @@ export default function Query() {
     return () => clearTimeout(t);
   }, [key, tab]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const insert = (text: string) => { setTab("sql"); setSql((s) => (s ? `${s}${s.endsWith(" ") || s.endsWith("\n") ? "" : " "}${text}` : `SELECT ${text}\nFROM ${schema?.table ?? "iot_logs"}`)); };
+  const saveIt = (done: () => void) => save.mutate(undefined, { onSuccess: () => { setName(""); done(); } });
   const load = (q: Saved) => {
     if (q.spec) { setTab("builder"); setSpec(q.spec); } else { setTab("sql"); setSql(q.sql); run.mutate(q.sql); }
   };
@@ -382,29 +470,7 @@ export default function Query() {
   return (
     <>
       <PageHead title="Query" sub={`Ask a question in plain words${noSql ? " or" : ","} build one step by step${noSql ? "" : ", or write SQL"}. Everything is read-only.`} />
-      <div className={tab === "sql" ? "query-layout" : ""}>
-        {tab === "sql" && (
-          <aside className="query-side">
-            <Card title={<>Table <code>{schema?.table ?? "…"}</code></>} hint="Click to insert">
-              <ul className="side-list schema">
-                {schema?.columns.map((c) => (
-                  <li key={c.name}><button type="button" title={c.about} onClick={() => insert(c.name === "level (computed)" ? "level" : c.name)}>
-                    <code>{c.name}</code><span className="muted small">{c.about}</span></button></li>
-                ))}
-              </ul>
-              {schema && schema.fields.length > 0 && (
-                <>
-                  <h3 style={{ marginTop: 10 }}>Extracted fields</h3>
-                  <div className="row" style={{ gap: 4 }}>
-                    {schema.fields.map((f) => <button key={f} type="button" className="chip-btn" title={schema.payload_access.replace("name", f)}
-                      onClick={() => insert(schema.payload_access.replace("name", f))}>@{f}</button>)}
-                  </div>
-                </>
-              )}
-            </Card>
-          </aside>
-        )}
-
+      <div>
         <div className="stack">
           <Card>
             <div className="query-tabs">
@@ -427,29 +493,8 @@ export default function Query() {
             </div>
             {tab === "builder" && <Builder spec={spec} setSpec={setSpec} schema={schema} />}
             {tab === "ask" && <AskPanel initialPlan={params.get("plan") ?? undefined} />}
-            {tab === "sql" && (
-              <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); run.mutate(sql); }}>
-                <textarea rows={8} className="mono" value={sql} spellCheck={false} aria-label="SQL" placeholder={`SELECT service, count() FROM ${schema?.table ?? "iot_logs"} GROUP BY service`}
-                  onChange={(e) => setSql(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run.mutate(sql); }} />
-                <div className="row">
-                  <button className="btn primary" disabled={!sql.trim() || run.isPending}>{run.isPending ? "Running…" : "Run"}</button>
-                  <span className="muted small">Ctrl/⌘ + Enter · at most 500 rows</span>
-                </div>
-              </form>
-            )}
+            {tab === "sql" && <SqlEditor sql={sql} setSql={setSql} schema={schema} onRun={(q) => run.mutate(q)} running={run.isPending} />}
             {error && tab !== "ask" && <div className="callout bad" style={{ marginTop: 12 }}>{error.message}</div>}
-            {result && currentSql && tab === "sql" && (
-              <div className="row" style={{ marginTop: 12 }}>
-                {naming ? (
-                  <form className="row" onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => { setNaming(false); setName(""); } }); }}>
-                    <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Query name" />
-                    <button className="btn small primary" disabled={!name.trim() || save.isPending}>Save</button>
-                    <button type="button" className="btn small ghost" onClick={() => setNaming(false)}>Cancel</button>
-                  </form>
-                ) : <button className="btn small" onClick={() => setNaming(true)}>Save query</button>}
-                {save.error && <span className="error-text">{save.error.message}</span>}
-              </div>
-            )}
           </Card>
           {tab === "builder" && (result || build.isPending) && (
             <ResultView r={result} ran={build.variables} onDrill={drill} busy={build.isPending} actions={<>
@@ -459,17 +504,11 @@ export default function Query() {
                   {!noSql && <button type="button" className="btn small" onClick={() => { setSql(currentSql); setTab("sql"); }}>Edit as SQL</button>}
                 </div>)}
               </Pop>}
-              {currentSql && <Pop className="ghost" label="Save" title="Save this query">{(close) => (
-                <form className="stack" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => { setName(""); close(); } }); }}>
-                  <div className="pop-title">Name it to find it under Saved</div>
-                  <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Checkout errors" aria-label="Query name" />
-                  {save.error && <span className="error-text small">{save.error.message}</span>}
-                  <div className="row"><button className="btn small primary" disabled={!name.trim() || save.isPending}>Save</button></div>
-                </form>)}
-              </Pop>}
+              {currentSql && <SavePop name={name} setName={setName} onSave={saveIt} pending={save.isPending} error={save.error} />}
             </>} />
           )}
-          {tab === "sql" && result && <ResultView r={result} />}
+          {tab === "sql" && result && <ResultView r={result} busy={run.isPending}
+            actions={sql.trim() && <SavePop name={name} setName={setName} onSave={saveIt} pending={save.isPending} error={save.error} />} />}
         </div>
       </div>
     </>
