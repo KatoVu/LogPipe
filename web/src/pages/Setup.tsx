@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, useAction, usePoll, type Batch, type Job, type Settings, type Source, type Stream } from "../api";
 import { Card, JobRow, Loading, Meter, PageHead, Stepper, TimeAgo, fmt, sourceLabel } from "../ui";
-import { InstallStep, KeyStep } from "./AddAgent";
+import { ConnectHelp, InstallStep, KeyStep } from "./AddAgent";
 import { ReviewBatch } from "./Review";
 import { GroupsCard, StreamsEditor } from "./Streams";
 
@@ -93,7 +93,10 @@ export default function Setup() {
             <InstallStep token={token} />
             <h3 style={{ marginTop: 16 }}>Connected agents</h3>
             {data.agents.length === 0 ? (
-              <div className="waiting" role="status"><span className="spin" aria-hidden="true" /><div><strong>Waiting for the first agent…</strong></div></div>
+              <div className="stack">
+                <div className="waiting" role="status"><span className="spin" aria-hidden="true" /><div><strong>Waiting for the first agent…</strong></div></div>
+                <ConnectHelp token={token} />
+              </div>
             ) : (
               <div className="row">
                 {data.agents.map((a) => (

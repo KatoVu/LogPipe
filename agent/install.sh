@@ -76,5 +76,5 @@ cat <<EOF
 next:
   logpipe-agent init --endpoint http://YOUR-SERVER:8080 --api-key lp_...
   logpipe-agent track '/var/log/myapp/*.log' --service myapp
-  logpipe-agent check && logpipe-agent run
+  logpipe-agent check && logpipe-agent service install
 EOF

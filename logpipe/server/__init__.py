@@ -135,8 +135,8 @@ def run(
     )
     if generated:
         print(
-            f"[server] admin password for the UI: {generated}  (change it in the UI; set "
-            "LOGPIPE_ADMIN_PASSWORD to reset it)",
+            f"[server] admin password for the UI: {generated}  (the default: the first login "
+            "asks for a new one; set LOGPIPE_ADMIN_PASSWORD to reset a forgotten one)",
             flush=True,
         )
     try:

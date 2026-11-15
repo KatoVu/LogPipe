@@ -119,8 +119,8 @@ flowchart LR
 ## Setting up the server
 
 The server takes in agent logs, runs the operator UI on port 8080 and trains the models. It
-stores data in ClickHouse (or MongoDB). On the first start it prints the UI admin password,
-unless `LOGPIPE_ADMIN_PASSWORD` is set.
+stores data in ClickHouse (or MongoDB). A new server's UI password is `changeme` (unless
+`LOGPIPE_ADMIN_PASSWORD` is set); the first login asks you to replace it.
 
 ### Using the shipped container
 
@@ -151,7 +151,7 @@ git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 make setup                                   # uv sync + .env
 cd web && npm ci && npm run build && cd ..   # UI into logpipe/server/static
 docker compose up -d clickhouse
-uv run logpipe server --store clickhouse     # prints the admin password on first start
+uv run logpipe server --store clickhouse     # log in with changeme, then set your own
 ```
 
 ## Install the agent
@@ -172,9 +172,14 @@ or as a binary (Linux or macOS), no root needed
 ```sh
 curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
+```
+
+then set it up and run it in the background
+
+```sh
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
-logpipe-agent check && logpipe-agent run
+logpipe-agent check && logpipe-agent service install
 ```
 
 (from source: `cd agent && go build -o logpipe-agent .`)

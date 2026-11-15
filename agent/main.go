@@ -40,6 +40,7 @@ commands:
   config    get KEY | set KEY VALUE | edit [FILE] | show | path
   status                                      what the running agent is doing
   check                                       validate config and test the server connection
+  service   install | uninstall               run it in the background at boot (systemd or launchd)
   version
 
 -c defaults to $LOGPIPE_AGENT_CONFIG, else /etc/logpipe-agent as root and
@@ -84,6 +85,8 @@ func dispatch(dir, cmd string, args []string, out io.Writer) error {
 		return cmdStatus(dir, out)
 	case "check":
 		return cmdCheck(dir, out)
+	case "service":
+		return cmdService(dir, args, out)
 	case "version":
 		fmt.Fprintln(out, version)
 		return nil

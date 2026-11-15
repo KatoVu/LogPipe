@@ -19,7 +19,7 @@ and every `v*` tag. The UI is built into the image.
 ```sh
 docker compose pull server
 docker compose up -d clickhouse server
-docker compose logs server | grep -i password    # the first start prints the admin password
+# open the UI and log in with changeme; it asks for a new password
 ```
 
 Open <http://localhost:8080>, sign in and follow the setup guide (API key → install agents →
@@ -53,7 +53,7 @@ See [Install](install.md) for details.
 make setup                                   # uv sync --group dev + .env
 cd web && npm ci && npm run build && cd ..   # builds the UI into logpipe/server/static
 docker compose up -d clickhouse              # or skip it and use --store memory
-uv run logpipe server --store clickhouse     # the first start prints the admin password
+uv run logpipe server --store clickhouse     # log in with changeme, then set your own
 ```
 
 The server reads ClickHouse settings (`CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, user and password)
@@ -70,8 +70,9 @@ For UI work, run `cd web && npm run dev`. It serves on :5173 and proxies `/api` 
 
 ## Admin password
 
-If `LOGPIPE_ADMIN_PASSWORD` is unset, the first start generates a password, prints it once and
-stores its hash in the store (ClickHouse or MongoDB). You can change it under **Settings → Password & session**.
+If `LOGPIPE_ADMIN_PASSWORD` is unset, a new server starts with the password `changeme` and stores
+its hash in the store (ClickHouse or MongoDB). The first login with it opens only a **Set a new
+password** screen: until it changes, every other `/api` route answers 403 (agents' API keys still work). You can change it under **Settings → Password & session**.
 If you forget it, set `LOGPIPE_ADMIN_PASSWORD` and restart: a password from the environment always
 wins.
 
