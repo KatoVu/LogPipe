@@ -663,6 +663,7 @@ def test_template_links_show_who_made_them_and_can_be_undone(env):
     assert client.post(f"/api/templates/{a}/link", json={"target": b}).json()["alias_of"] == b
     tpl = {t["template_id"]: t for t in client.get("/api/templates").json()["templates"]}
     assert tpl[a]["linked_by"] == "you" and tpl[a]["canonical"] == b and tpl[b]["linked"] == [a]
+    assert client.get("/api/overview").json()["auto_links"] == 0  # yours are not announced
     send(server, client, headers, events(["worker 1 finished job 5"], start=900))
     assert (
         client.get("/api/logs", params={"q": "job 5", "limit": 1}).json()["logs"][0]["template_id"]
@@ -995,5 +996,6 @@ def test_firmware_changes_a_variable_is_linked_by_itself_a_rewording_needs_the_l
     currency = next(t for t in new if t["text"].startswith("checkout"))
     reworded = next(t for t in new if "completed" in t["text"])
     assert currency["alias_of"] == old and currency["linked_by"] == "pipeline"
+    assert client.get("/api/overview").json()["auto_links"] == 1
     assert currency["link_reason"] == "differs only in variable slots"
     assert reworded["alias_of"] is None  # offline: rewording is never linked without an LLM

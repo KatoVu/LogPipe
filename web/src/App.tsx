@@ -102,7 +102,7 @@ export default function App() {
   useServerEvents();
   // What needs a person: templates to review and models with templates they haven't seen.
   const todo = (data?.review ?? 0) + (data?.warnings.novel_template ?? 0);
-  const note = useNotifications(data ? todo : undefined);
+  const note = useNotifications(data ? todo : undefined, data?.auto_links);
   const [open, setOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setOpen(false), [location.pathname]);

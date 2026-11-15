@@ -1,5 +1,5 @@
 // Toasts (and, opted in, desktop notifications) for a new anomaly incident, a firing metric alert,
-// new maintenance to-dos and jobs that are queued, finish or fail; all but queued jobs also
+// new maintenance to-dos, templates linked to an existing one and jobs that are queued, finish or fail; all but queued jobs also
 // chime unless muted. Plus the counts the sidebar shows. Only what changes after the page
 // loaded is announced, never the backlog.
 import { useEffect, useRef, useState } from "react";
@@ -42,8 +42,9 @@ function desktopOn() {
   catch { return false; }
 }
 
-/** `todo`: the Maintenance count, undefined until the overview has loaded. */
-export function useNotifications(todo?: number) {
+/** `todo`: the Maintenance count and `links`: templates the learner linked to an existing one,
+ * both undefined until the overview has loaded. */
+export function useNotifications(todo?: number, links?: number) {
   const incidents = usePoll<{ incidents: Incident[] }>("/api/incidents", 5000).data?.incidents;
   const jobs = usePoll<{ jobs: Job[] }>("/api/jobs", 3000).data?.jobs;
   const metricAlerts = usePoll<{ alerts: MetricAlert[] }>("/api/system/alerts", 10000).data?.alerts;
@@ -51,6 +52,7 @@ export function useNotifications(todo?: number) {
   const seenIncidents = useRef<Set<string> | null>(null);
   const seenJobs = useRef<Map<string, Job["status"]> | null>(null);
   const lastTodo = useRef<number | null>(null);
+  const lastLinks = useRef<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const go = useNavigate();
 
@@ -96,6 +98,16 @@ export function useNotifications(todo?: number) {
     push({ id: "maintenance", title: "Maintenance needs you", tone: "info", to: "/maintenance",
       body: `${todo} item${todo === 1 ? "" : "s"} to review: new templates or models that need retraining.` }, true, true);
   }, [todo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (links === undefined) return;
+    const before = lastLinks.current;
+    lastLinks.current = links;
+    if (before === null || links <= before) return;
+    const n = links - before;
+    push({ id: "template-linked", title: n === 1 ? "Template linked" : `${n} templates linked`, tone: "info", to: "/templates",
+      body: `${n === 1 ? "A new log template was" : `${n} new log templates were`} recognised as an existing one; models count those lines as the old template.` }, true, true);
+  }, [links]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!jobs) return;
@@ -155,7 +167,7 @@ export function DesktopToggle() {
     <div className="stack" style={{ gap: 4 }}>
       <Switch checked={on} onChange={toggle} disabled={denied} label="Desktop notifications" />
       <span className="muted small">{denied ? "Blocked in this browser's site settings: allow notifications for this site there, then come back."
-        : "Anomalies, metric alerts, maintenance and finished or failed jobs, while this tab is in the background."}</span>
+        : "Anomalies, metric alerts, maintenance, linked templates and finished or failed jobs, while this tab is in the background."}</span>
     </div>
   );
 }
@@ -171,7 +183,7 @@ export function SoundToggle() {
   return (
     <div className="stack" style={{ gap: 4 }}>
       <Switch checked={on} onChange={toggle} label="Alert sound" />
-      <span className="muted small">A short chime with anomalies, metric alerts, new maintenance items and finished or failed jobs.</span>
+      <span className="muted small">A short chime with anomalies, metric alerts, new maintenance items, linked templates and finished or failed jobs.</span>
     </div>
   );
 }

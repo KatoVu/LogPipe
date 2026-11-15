@@ -213,6 +213,7 @@ export interface Overview {
   agents_online: number;
   sources: number;
   templates: number;
+  auto_links: number;
   registry_version: number;
   warnings: Record<string, number>;
   review: number;
