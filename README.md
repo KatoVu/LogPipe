@@ -25,6 +25,29 @@
 
 ---
 
+## Quickstart (demo)
+
+Needs Docker, [uv](https://docs.astral.sh/uv/) and Node.js.
+
+```bash
+git clone https://github.com/KatoVu/LogPipe.git
+cd LogPipe
+cd web
+npm ci && npm run build   # the operator UI
+cd ..
+make setup                # Python deps, and .env from .env.example
+```
+
+Edit `.env` for Datadog: uncomment `DD_API_KEY` and `DD_APP_KEY` and fill in your keys, and set
+`DD_SITE` to your region (`us3.datadoghq.com` for US3). Then run the guided tour and press Enter
+at every question to take the defaults:
+
+```bash
+uv run logpipe showcase --datadog
+```
+
+Without a Datadog account, leave out `--datadog`.
+
 ## Features
 
 | Feature | What it does |
