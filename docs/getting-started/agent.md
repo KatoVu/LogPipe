@@ -11,6 +11,8 @@ traces, and can drop or mask lines before they leave the host.
 
 === "Container"
 
+    Put in your server URL and key, then run:
+
     ```sh
     docker run -d --name logpipe-agent --restart unless-stopped \
       -e LOGPIPE_ENDPOINT=http://logpipe.example:8080 \
@@ -23,13 +25,19 @@ traces, and can drop or mask lines before they leave the host.
       ghcr.io/katovu/logpipe-agent:latest
     ```
 
-    - The image is built by the `Images` workflow for amd64, arm64 and arm/v7. To build it
-      yourself instead: `docker build -t logpipe-agent agent/` and use `logpipe-agent` as the
-      image name.
-    - `/var/log` (read-only) is what it can tail; the Docker socket lets it read container logs;
-      the `logpipe-agent` volume keeps file offsets and the send buffer across restarts;
-      `conf.d` holds your sources (optional: sources can also be pushed from the UI).
-    - The image has no `journalctl`, so for journald sources run the binary on the host.
+    | Part | What it is for |
+    |---|---|
+    | `-d --restart unless-stopped` | runs in the background and comes back after a crash or reboot |
+    | `LOGPIPE_ENDPOINT`, `LOGPIPE_API_KEY` | your server and the key you just created |
+    | `LOGPIPE_HOSTNAME=$(hostname)` | shows the host's name on the **Agents** page instead of the container ID |
+    | `-v /var/log:/var/log:ro` | the log files it can tail (read-only) |
+    | `-v /var/run/docker.sock:…:ro` | lets it read other containers' logs |
+    | `-v logpipe-agent:/var/lib/logpipe-agent` | keeps file offsets and the send buffer across restarts |
+    | `-v $PWD/conf.d:/etc/logpipe-agent/conf.d` | keeps the sources you add with `track`; leave it out if you only add sources in the UI |
+
+    The image is built for amd64, arm64 and arm/v7. It has no `journalctl`, so for journald
+    sources use the binary. To build it yourself: `docker build -t logpipe-agent agent/`. Next:
+    [use the container](#use-the-container).
 
 === "Binary"
 
@@ -39,11 +47,12 @@ traces, and can drop or mask lines before they leave the host.
 
     ```sh
     curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"   # where it goes without root; add this line to your shell profile
     ```
 
     `LOGPIPE_AGENT_VERSION=v1.0.1` pins a release, `LOGPIPE_AGENT_INSTALL_DIR` changes the target
-    directory, and `LOGPIPE_AGENT_BASE_URL` points at a mirror. [Run in the background](#run-in-the-background-binary)
-    keeps it running.
+    directory, and `LOGPIPE_AGENT_BASE_URL` points at a mirror. Next:
+    [use the binary](#use-the-binary).
 
 === "From source (Go)"
 
@@ -63,19 +72,51 @@ traces, and can drop or mask lines before they leave the host.
     without root, add yourself to the `adm` group once: `sudo usermod -aG adm $USER`, then log out
     and back in.
 
-## First run (binary)
+## Use the binary
+
+**Set it up**: point it at the server and tell it what to collect.
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent track journald:nginx.service --service nginx --source nginx
 logpipe-agent check        # validates config, counts matching files, tests the server and key
-logpipe-agent run          # foreground; reloads by itself when a config file changes
-logpipe-agent service install   # ...or in the background, started at boot
 ```
 
-The host appears on the **Agents** page within a second of connecting.
+**Start it** in the background. It starts at boot and restarts after a crash
+([details](#run-in-the-background-binary)):
+
+```sh
+logpipe-agent service install
+```
+
+To try it in the foreground first, use `logpipe-agent run` (Ctrl+C stops it). The host appears
+on the **Agents** page within a second of connecting.
+
+## Use the container
+
+The container is already running. Add sources and check on it through `docker exec`; a short
+alias saves typing:
+
+```sh
+alias lpa='docker exec logpipe-agent logpipe-agent'
+lpa track '/var/log/myapp/*.log' --service myapp --source java   # paths as seen inside: /var/log
+lpa status                                                       # files, line counts, send errors
+docker logs -f logpipe-agent                                     # the agent's own log
+```
+
+Sources can also be added in the UI (**Agents → your host → Push sources**). `track` writes into
+the mounted `conf.d` and the agent reloads by itself, so there is nothing to restart.
+
+**Upgrade** (offsets and the buffer stay in the `logpipe-agent` volume):
+
+```sh
+docker pull ghcr.io/katovu/logpipe-agent:latest
+docker rm -f logpipe-agent
+# then the same docker run as above
+```
+
+**Remove**: `docker rm -f logpipe-agent && docker volume rm logpipe-agent`.
 
 ## Basic commands
 
@@ -99,32 +140,28 @@ Useful `track` flags: `--service`, `--source`, `--tag k:v`, `--auto-multiline`,
 `--multiline REGEX`, `--exclude REGEX`, `--include REGEX`, `--mask 'REGEX=>REPLACEMENT'`,
 `--label key=value` (docker), `--start beginning|end`.
 
-In the container, run the same commands through `docker exec`:
-
-```sh
-docker exec logpipe-agent logpipe-agent status
-docker exec logpipe-agent logpipe-agent check
-docker exec logpipe-agent logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java
-docker logs -f logpipe-agent
-```
-
-`track` writes into `/etc/logpipe-agent/conf.d`, so mount that directory (as above) to keep
-sources across container restarts.
+The container takes the same commands through `docker exec` ([see above](#use-the-container)).
 
 ## Run in the background (binary)
 
 `logpipe-agent run` stays in the foreground. `service install` hands it to the OS instead, so it
 starts at boot and restarts after a crash. It uses the binary's own path and the config directory
-from `init`:
+from `init`: a systemd user unit on Linux, a launchd agent on macOS, a system-wide one as root.
+
+**Install the service:**
 
 ```sh
-logpipe-agent service install     # Linux: systemd user unit, macOS: launchd agent; as root: system-wide
+logpipe-agent service install
 loginctl enable-linger $USER      # Linux as a normal user: keep it running after you log out
-logpipe-agent service uninstall   # stop it and remove the unit
 ```
 
-Logs: `journalctl --user -u logpipe-agent -f` (`journalctl -u logpipe-agent -f` as root), or
-`agent.log` in the config directory on macOS. `status` works as usual.
+**Use it:**
+
+```sh
+logpipe-agent status                     # what it is doing
+journalctl --user -u logpipe-agent -f    # its log (as root: journalctl -u logpipe-agent -f; macOS: agent.log in the config directory)
+logpipe-agent service uninstall          # stop it and remove the service
+```
 
 **By hand, as a dedicated `logpipe` user** (system-wide, not root). Install as root so the binary is in
 `/usr/local/bin`, where the unit expects it:

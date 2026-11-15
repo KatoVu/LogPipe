@@ -6,7 +6,7 @@ integration in `conf.d/`.
 
 ## Quick start (docker)
 
-Create an API key in the UI (**API keys** page), then:
+Create an API key in the UI (**Settings → API keys**), put it and your server URL in, and start it:
 
 ```bash
 docker run -d --name logpipe-agent --restart unless-stopped \
@@ -16,12 +16,26 @@ docker run -d --name logpipe-agent --restart unless-stopped \
   -v /var/log:/var/log:ro \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v logpipe-agent:/var/lib/logpipe-agent \
+  -v $PWD/conf.d:/etc/logpipe-agent/conf.d \
   ghcr.io/katovu/logpipe-agent:latest
 ```
 
-The agent appears on the **Agents** page as soon as it connects. Add sources there (they are pushed to the
-agent as `conf.d/remote.yaml`), or mount your own `conf.d`:
-`-v $PWD/conf.d:/etc/logpipe-agent/conf.d`.
+`-d --restart unless-stopped` keeps it running across crashes and reboots. `/var/log` is what it
+can tail, the Docker socket gives it other containers' logs, the `logpipe-agent` volume keeps
+offsets and the send buffer, and `conf.d` keeps the sources you add with `track`.
+
+The agent appears on the **Agents** page as soon as it connects. Add sources there (pushed to the
+agent as `conf.d/remote.yaml`), or from the shell:
+
+```bash
+alias lpa='docker exec logpipe-agent logpipe-agent'
+lpa track '/var/log/myapp/*.log' --service myapp --source java
+lpa status
+docker logs -f logpipe-agent
+```
+
+Upgrade with `docker pull ghcr.io/katovu/logpipe-agent:latest && docker rm -f logpipe-agent`, then
+the same `docker run`; the volume keeps its place in every file.
 
 ## Quick start (binary)
 
@@ -30,7 +44,12 @@ picks yours, checks its sha256 and puts it in `~/.local/bin` (`/usr/local/bin` a
 
 ```bash
 curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
+export PATH="$HOME/.local/bin:$PATH"   # where it goes without root; add this to your shell profile
+```
+
+Then set it up and start it in the background:
+
+```bash
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent check
