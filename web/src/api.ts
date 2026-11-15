@@ -193,7 +193,11 @@ export interface IncidentEvent {
   expected: { template_id: number; template: string; words: string }[];
 }
 
+/** A status change or a comment on an incident, oldest first; ``by`` is an AI assistant key's name, null for a person. */
+export interface IncidentActivity { kind: "status" | "comment"; status?: IncidentStatus; text: string; by: string | null; at: string }
+
 export interface IncidentDetail extends Incident {
+  activity: IncidentActivity[];
   events: IncidentEvent[];
   around: { timestamp: string; host: string; service: string; message: string; level: string }[];
   model_current: boolean;
