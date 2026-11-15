@@ -1,10 +1,12 @@
 name: Agent release
 
-# logpipe-agent binaries (+ install.sh and checksums) on every v* release. A manual run builds
-# the same files as workflow artifacts without publishing anything.
+# logpipe-agent binaries (+ install.sh and checksums) on every v* release. A manual run, or a PR
+# that touches the agent, builds the same files as workflow artifacts without publishing anything.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: ["agent/**", ".github/workflows/agent-release.yml"]
   workflow_dispatch:
 
 permissions:
