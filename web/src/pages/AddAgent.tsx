@@ -20,6 +20,7 @@ export function installCommands(token: string) {
     ].join("\n"),
     binary: [
       "curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh",
+      'export PATH="$HOME/.local/bin:$PATH"',
       `logpipe-agent init --endpoint ${endpoint} --api-key ${token}`,
       "logpipe-agent track '/var/log/myapp/*.log' --service myapp --auto-multiline",
       "logpipe-agent check && logpipe-agent run",

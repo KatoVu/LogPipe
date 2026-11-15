@@ -42,8 +42,8 @@ traces, and can drop or mask lines before they leave the host.
     ```
 
     `LOGPIPE_AGENT_VERSION=v1.0.1` pins a release, `LOGPIPE_AGENT_INSTALL_DIR` changes the target
-    directory, and `LOGPIPE_AGENT_BASE_URL` points at a mirror. `agent/README.md` has a systemd unit
-    to keep it running.
+    directory, and `LOGPIPE_AGENT_BASE_URL` points at a mirror. [Run in the background](#run-in-the-background-binary)
+    keeps it running.
 
 === "From source (Go)"
 
@@ -66,6 +66,7 @@ traces, and can drop or mask lines before they leave the host.
 ## First run (binary)
 
 ```sh
+export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent track journald:nginx.service --service nginx --source nginx
@@ -108,7 +109,59 @@ docker logs -f logpipe-agent
 `track` writes into `/etc/logpipe-agent/conf.d`, so mount that directory (as above) to keep
 sources across container restarts.
 
-## Run as a service (binary)
+## Run in the background (binary)
+
+`logpipe-agent run` stays in the foreground; let the OS keep it running and restart it after a
+crash or reboot.
+
+**Linux, as your user** (the installer's `~/.local/bin`, no root):
+
+```ini title="~/.config/systemd/user/logpipe-agent.service"
+[Unit]
+Description=logpipe-agent
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/logpipe-agent run
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now logpipe-agent
+loginctl enable-linger $USER   # keep it running when you are logged out
+journalctl --user -u logpipe-agent -f
+```
+
+**macOS** (replace `YOU` with your user name; launchd needs absolute paths):
+
+```xml title="~/Library/LaunchAgents/io.logpipe.agent.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.logpipe.agent</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/YOU/.local/bin/logpipe-agent</string><string>run</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/logpipe-agent.log</string>
+</dict>
+</plist>
+```
+
+```sh
+launchctl load -w ~/Library/LaunchAgents/io.logpipe.agent.plist
+```
+
+**Linux, system-wide** as a dedicated `logpipe` user. Install as root so the binary is in
+`/usr/local/bin`, where the unit expects it:
+
+```sh
+curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sudo sh
+```
 
 ```ini title="/etc/systemd/system/logpipe-agent.service"
 [Unit]

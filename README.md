@@ -171,6 +171,7 @@ or as a binary (Linux or macOS), no root needed
 
 ```sh
 curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent check && logpipe-agent run

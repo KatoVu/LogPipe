@@ -30,6 +30,7 @@ picks yours, checks its sha256 and puts it in `~/.local/bin` (`/usr/local/bin` a
 
 ```bash
 curl -fsSL https://github.com/KatoVu/LogPipe/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # where the installer puts it without root
 logpipe-agent init --endpoint http://logpipe.example:8080 --api-key lp_xxx
 logpipe-agent track '/var/log/myapp/*.log' --service myapp --source java --auto-multiline
 logpipe-agent check
@@ -56,6 +57,24 @@ Restart=always
 
 [Install]
 WantedBy=default.target
+```
+
+On macOS, a launchd agent does the same (`~/Library/LaunchAgents/io.logpipe.agent.plist`, then
+`launchctl load -w` on it; replace `YOU`, launchd needs absolute paths):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.logpipe.agent</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/YOU/.local/bin/logpipe-agent</string><string>run</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/logpipe-agent.log</string>
+</dict>
+</plist>
 ```
 
 No sudo needed. As a normal user the config lives in `~/.config/logpipe-agent` (offsets and the
