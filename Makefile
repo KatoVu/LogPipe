@@ -32,7 +32,7 @@ RCA_OUT  := $(EVAL_OUT)/rcaeval
 MKDOCS   := NO_MKDOCS_2_WARNING=1 uvx --from mkdocs-material==9.8.1 mkdocs
 
 .DEFAULT_GOAL := help
-.PHONY: help setup start calibrate train run run-fast worker replay gen-iot demo demo-datadog bench \
+.PHONY: help setup start calibrate train run run-fast worker replay gen-iot fleet demo-datadog bench \
         data data-loghub data-hdfs data-bgl \
         retrain-data retrain-eval \
         eval eval-parsing eval-alias eval-iot eval-hdfs eval-bgl eval-report eval-gate eval-baseline \
@@ -50,7 +50,7 @@ setup: ## install deps and create .env from the example
 	uv sync --group dev
 	@test -f .env || { cp .env.example .env; echo "created .env"; }
 
-start: ## interactive: asks what to run (demo or your logs, Kafka or not), sets it up, runs it
+start: ## interactive: asks what to run (your logs or the server, Kafka or not), sets it up, runs it
 	$(RUN) logpipe start
 
 ## --- pipeline (paths from .env) ---------------------------------------------
@@ -76,7 +76,7 @@ replay: ## parse LOGS_PATH with the frozen registry only
 gen-iot: ## write the synthetic IoT fleet to artifacts/fleet
 	$(LOGPIPE) gen-iot --out artifacts/fleet
 
-demo: gen-iot ## end to end on the synthetic fleet
+fleet: gen-iot ## end to end on the synthetic fleet
 	$(LOGPIPE) calibrate --logs artifacts/fleet/history $(LLM_ARG)
 	$(LOGPIPE) train-logbert --logs artifacts/fleet/history --epochs $(EPOCHS)
 	$(LOGPIPE) run --logs artifacts/fleet/test $(LLM_ARG)

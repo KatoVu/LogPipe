@@ -17,8 +17,7 @@ prefix, read once through `get_settings()`. `.env` is loaded by `make` (and `uv 
     | `MODEL_PATH` | `artifacts/logbert` | batch LogBERT model |
     | `STORE` | `memory` | `memory` · `clickhouse` · `mongodb` |
     | `QUEUE` | `memory` | `memory` · `kafka` |
-    | `LLM_BACKEND` | `offline` | `offline` · `hf` · `llm:<provider>[:<model>]` · `llm:web:<site>` |
-    | `WEB_BROWSER` | `camoufox` | `camoufox` · `chromium` |
+    | `LLM_BACKEND` | `offline` | `offline` · `hf` · `llm:<provider>[:<model>]` ([Set up an LLM](../getting-started/llm.md)) |
     | `HF_BASE` / `HF_ADAPTER` | DeepSeek-R1-Distill-Llama-8B / `MThien213/deepparse-iot-r1-8b` | `hf` backend |
 
 === "Stores & queue"

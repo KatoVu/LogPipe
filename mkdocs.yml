@@ -64,6 +64,8 @@ nav:
   - Getting started:
       - getting-started/index.md
       - Install: getting-started/install.md
+      - Set up an LLM: getting-started/llm.md
+      - Web chat as the LLM: getting-started/web-chat.md
       - Set up the server: getting-started/server.md
       - Run it: getting-started/run.md
       - Install the agent: getting-started/agent.md
@@ -91,24 +93,3 @@ nav:
       - MongoDB: guides/mongodb.md
       - Maintenance: guides/maintenance.md
       - CI / CD: ci.md
-  - Security:
-      - security/index.md
-      - SQL injection: security/attacks/sql.md
-      - Prompt injection: security/attacks/prompt.md
-      - ReDoS: security/attacks/redos.md
-      - Key and field-name injection: security/attacks/keys.md
-      - DOM injection: security/attacks/domi.md
-  - Design records:
-      - plan/index.md
-      - "MCP: persona": plan/persona.md
-      - "MCP: features": plan/features.md
-      - "MCP: decisions": plan/tech-decisions.md
-      - "AI root cause: persona": plan/ai-rca/persona.md
-      - "AI root cause: features": plan/ai-rca/features.md
-      - "AI root cause: decisions": plan/ai-rca/tech-decisions.md
-      - "Datadog: persona": plan/datadog/persona.md
-      - "Datadog: features": plan/datadog/features.md
-      - "Datadog: decisions": plan/datadog/tech-decisions.md
-      - "Ops polish: persona": plan/ops-polish/persona.md
-      - "Ops polish: features": plan/ops-polish/features.md
-      - "Ops polish: decisions": plan/ops-polish/tech-decisions.md

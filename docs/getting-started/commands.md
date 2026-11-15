@@ -2,8 +2,7 @@
 
 ## `logpipe`
 
-`uv run logpipe [--browser camoufox|chrome] <command> …`. `--browser` is global, so it goes
-before the command, and is used only by `llm:web:<site>` backends. Every command has `-h`.
+`uv run logpipe <command> …`. Every command has `-h`.
 
 | Command | What it does | Main options |
 |---|---|---|
@@ -14,8 +13,7 @@ before the command, and is used only by `llm:web:<site>` backends. Every command
 | `worker` | learning worker on the unresolved queue (Kafka) | `--queue`, `--store`, `--llm`, `--batch`, `--poll`, `--max-attempts`, `--max-cycles` |
 | `train-logbert` | train LogBERT on per-device windows | `--logs`, `--out`, `--window`, `--stride`, `--hidden`, `--layers`, `--heads`, `--epochs` |
 | `gen-iot` | write the synthetic IoT fleet (history / validation / test) | `--out`, `--devices`, `--history-hours`, `--test-hours`, `--seed` |
-| `demo` | the pipeline live in a browser | `--queue`, `--store`, `--llm`, `--registry`, `--recalibrate`, size flags |
-| `server` | agent intake + operator UI + learning lifecycle + MCP | `--store`, `--queue`, `--llm`, `--data-dir`, `--epochs`, `--demo`, `--host`, `--port` |
+| `server` | agent intake + operator UI + learning lifecycle + MCP | `--store`, `--queue`, `--llm`, `--data-dir`, `--epochs`, `--host`, `--port` |
 | `showcase` | guided tour on a generated web shop with a real agent | `--no-ask`, `--auto` |
 | `bench` | how many lines/s one server sustains, with CPU and memory | `--store`, `--max-rate`, `--step-seconds`, `--out` |
 | `fetch-data` | download eval datasets up front | `loghub2k`, `HDFS`, `BGL` |
@@ -31,8 +29,8 @@ uv run python -m logpipe.eval.rcaeval_bench artifacts/eval/rcaeval/tasks/re3-ob 
 ## `make`
 
 `make help` lists every target. Make variables override for one run: `LLM=…`, `EPOCHS=…`,
-`THREADS=…`, `BROWSER=chromium`, `STORE=…`, `EVAL_OUT=…`, `DATASET=…`, `VIA=…`, `LIMIT=…`,
-`VARIANTS=…`, `FRESH=1`, `SITE=…`, `PROMPT=…`.
+`THREADS=…`, `STORE=…`, `EVAL_OUT=…`, `DATASET=…`, `VIA=…`, `LIMIT=…`,
+`VARIANTS=…`, `FRESH=1`.
 
 === "Setup & services"
 
@@ -53,7 +51,7 @@ uv run python -m logpipe.eval.rcaeval_bench artifacts/eval/rcaeval/tasks/re3-ob 
     | `run-fast` | fast path only, unknown lines to Kafka |
     | `worker` | learning worker on Kafka |
     | `replay` | frozen registry only |
-    | `gen-iot` / `demo` | synthetic fleet / end to end on it |
+    | `gen-iot` / `fleet` | synthetic fleet / end to end on it |
 
 === "Evaluation"
 
@@ -66,15 +64,6 @@ uv run python -m logpipe.eval.rcaeval_bench artifacts/eval/rcaeval/tasks/re3-ob 
     | `eval-report` / `eval-gate` / `eval-baseline` | report, CI gate, record baseline |
     | `bench` | throughput (`STORE=clickhouse` to include writes) |
     | `retrain-data` / `retrain-eval` | mask-model fine-tune data and scoring |
-
-=== "Web LLM"
-
-    | target | |
-    |---|---|
-    | `web-setup` | Camoufox once (`BROWSER=chromium` uses yours) |
-    | `web-login SITE=gemini` | sign in, visible window |
-    | `web-check SITE=gemini` | check headless |
-    | `web-ask SITE=gemini PROMPT=…` | one prompt |
 
 === "Quality"
 

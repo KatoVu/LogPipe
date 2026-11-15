@@ -6,7 +6,7 @@ Lines the fast parser does not recognise are stored as `PENDING` and handed to t
 - **several workers**: `logpipe worker` processes form a consumer group and share
   the topic's partitions.
 
-`QUEUE=memory` (the default) keeps the old single-process behaviour; nothing changes for tests, `make demo` or the evaluation.
+`QUEUE=memory` (the default) keeps the old single-process behaviour; nothing changes for tests, `make fleet` or the evaluation.
 
 ## How it works
 

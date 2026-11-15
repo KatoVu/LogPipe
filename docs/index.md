@@ -49,7 +49,7 @@ and visual query layer, an approval-gated "Ask" box and an MCP endpoint for AI a
 
     ---
 
-    Memory, ClickHouse or MongoDB storage; an in-process or Kafka queue; offline rules, a hosted API, a fine-tuned model or your signed-in web chat as the LLM. [Replacing components →](guides/replace-components.md)
+    Memory, ClickHouse or MongoDB storage; an in-process or Kafka queue; offline rules, a hosted API or a fine-tuned model as the LLM. [Replacing components →](guides/replace-components.md)
 
 </div>
 
@@ -112,13 +112,6 @@ MCP can propose but never apply.
 Methods, caveats and full tables: [Benchmarks](benchmarks/index.md).
 
 ## Start here
-
-=== "Try it in a browser"
-
-    ```sh
-    uv sync --group dev
-    uv run logpipe demo          # synthetic IoT fleet, the whole pipeline live in a page
-    ```
 
 === "Run the server"
 

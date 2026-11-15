@@ -64,16 +64,6 @@ def text(question: str, default: str, check: Callable[[str], str | None] = lambd
         print(f"  {error}")
 
 
-def number(question: str, default: float, cast: type = int) -> float:
-    def bad(answer: str) -> str | None:
-        try:
-            return None if cast(answer) > 0 else "must be positive"
-        except ValueError:
-            return "not a number"
-
-    return cast(text(question, str(default), bad))
-
-
 def confirm(question: str, default: bool = True) -> bool:
     answer = _ask(f"\n{question} [{'Y/n' if default else 'y/N'}]: ").lower()
     return default if not answer else answer.startswith("y")
@@ -142,7 +132,6 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
     a["mode"] = mode or choose(
         "What do you want to run?",
         [
-            ("demo", "browser demo: a live synthetic IoT fleet through every stage"),
             ("pipeline", "the pipeline on your own log files"),
             ("server", "the server for logpipe-agent hosts, with the operator UI"),
         ],
@@ -164,11 +153,7 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
                 "in memory, gone when the run ends"
                 + (" (API keys and agents too)" if a["mode"] == "server" else ""),
             ),
-            (
-                "clickhouse",
-                "ClickHouse in Docker, started for you"
-                + (" (the demo's Query tab then runs on it)" if a["mode"] == "demo" else ""),
-            ),
+            ("clickhouse", "ClickHouse in Docker, started for you"),
             ("mongodb", "MongoDB in Docker, started for you (everything except raw SQL)"),
         ],
         saved.get("store"),
@@ -205,37 +190,12 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
             saved.get("provider"),
         )
 
-    if a["mode"] == "demo":
-        a["masks"] = choose(
-            "Where do the regex masks come from?",
-            [
-                (
-                    "calibrate",
-                    "calibrate on the demo history once, then reuse it (artifacts/demo/)",
-                ),
-                ("recalibrate", "calibrate again, replacing that saved calibration"),
-                ("file", "a registry saved on Colab with the fine-tuned model"),
-            ],
-            saved.get("masks"),
-        )
-        if a["masks"] == "file":
-            a["registry"] = text(
-                "Registry file", saved.get("registry", "demo_registry.json"), _exists("registry")
-            )
-        a["devices"] = number("Devices per kind", saved.get("devices", 2))
-        a["test_hours"] = number(
-            "Hours of live stream (event time)", saved.get("test_hours", 1), float
-        )
-        a["port"] = int(text("Port for the page", str(saved.get("port", 8000)), _free_port))
-    elif a["mode"] == "server":
+    if a["mode"] == "server":
         a["server_port"] = int(
             text("Port for agents and the UI", str(saved.get("server_port", 8080)), _free_port)
         )
         a["data_dir"] = text(
             "Directory for the registry and models", saved.get("data_dir", "artifacts/server")
-        )
-        a["with_demo"] = confirm(
-            "Also serve the developer demo at /demo/?", saved.get("with_demo", False)
         )
     else:
         a["logs"] = text("Log directory", saved.get("logs", "logs"), _exists("directory"))
@@ -269,28 +229,6 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
         )
         if on
     ]
-    if a["mode"] == "demo":
-        cmd = [
-            *top,
-            "demo",
-            "--llm",
-            llm,
-            "--queue",
-            a["queue"],
-            "--store",
-            a["store"],
-            "--devices",
-            str(a["devices"]),
-            "--test-hours",
-            str(a["test_hours"]),
-            "--port",
-            str(a["port"]),
-        ]
-        if a["masks"] == "file":
-            cmd += ["--registry", a["registry"]]
-        elif a["masks"] == "recalibrate":
-            cmd.append("--recalibrate")
-        return services, [cmd]
     if a["mode"] == "server":
         cmd = [
             *top,
@@ -306,7 +244,7 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
             "--data-dir",
             a["data_dir"],
         ]
-        return services, [cmd + ["--demo"] if a["with_demo"] else cmd]
+        return services, [cmd]
     commands = []
     if not Path(a["registry"]).exists():
         commands.append(
@@ -358,10 +296,8 @@ def docker_up(services: list[str], run: Callable = subprocess.run) -> None:
 
 def _save(saved: dict, a: dict, signed_in: list[str]) -> None:
     SAVED.parent.mkdir(exist_ok=True)
-    # A one-off recalibration must not become the default.
-    masks = {"masks": "calibrate"} if a.get("masks") == "recalibrate" else {}
     # Merge so answers to questions this run skipped (another mode, another LLM) survive.
-    SAVED.write_text(json.dumps(saved | a | masks | {"signed_in": signed_in}, indent=2))
+    SAVED.write_text(json.dumps(saved | a | {"signed_in": signed_in}, indent=2))
 
 
 def start(
@@ -369,7 +305,7 @@ def start(
     launch: Callable[[list[str]], None] | None = None,
     mode: str | None = None,
 ) -> None:
-    """``mode`` skips the first question (``logpipe demo`` asks only the demo's questions)."""
+    """``mode`` skips the first question (``logpipe server`` asks only the server's questions)."""
     load_env()
     saved = json.loads(SAVED.read_text()) if SAVED.exists() else {}
     if saved:

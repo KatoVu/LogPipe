@@ -8,7 +8,7 @@ from logpipe.cli import main
 from logpipe.server.stores import reads_for
 
 
-@pytest.mark.parametrize("cmd", ["run", "worker", "demo", "server", "bench"])
+@pytest.mark.parametrize("cmd", ["run", "worker", "server", "bench"])
 def test_cli_accepts_mongodb(cmd):
     with pytest.raises(SystemExit) as ok:
         main([cmd, "--store", "mongodb", "--help"])  # help exits 0 only if the choice passed

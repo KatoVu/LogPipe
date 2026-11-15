@@ -35,7 +35,6 @@ const paths: Record<string, string> = {
   agents: "M5 6h14v8H5zM9 18h6m-3-4v4",
   bench: "M12 14l4-4M4 18a8 8 0 1116 0",
   jobs: "M12 7v5l3 3M12 3a9 9 0 100 18 9 9 0 000-18z",
-  demo: "M7 4l12 8-12 8V4z",
   system: "M3 12h4l3-8 4 16 3-8h4",
   settings: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z",
   keyboard: "M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8",
@@ -86,7 +85,6 @@ function AccountMenu() {
           <button type="button" role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new Event("logpipe:shortcuts")); }}>
             <Icon name="keyboard" />Keyboard shortcuts<kbd>?</kbd></button>
           <a href="/api/docs" role="menuitem"><Icon name="docs" />API docs</a>
-          <a href="/demo/" role="menuitem"><Icon name="demo" />Developer demo</a>
           {required && <><hr /><button type="button" role="menuitem" onClick={logout}><Icon name="logout" />Log out</button></>}
         </div>
       )}

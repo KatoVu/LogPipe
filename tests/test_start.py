@@ -15,41 +15,40 @@ def test_saved_answers_become_the_defaults(tmp_path, monkeypatch):
     (tmp_path / "docker-compose.yaml").write_text("services: {}\n")
     monkeypatch.setattr(wizard.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
+    monkeypatch.setenv("LOGPIPE_ADMIN_PASSWORD", "long enough")
     ran, launched = [], []
-    # demo, kafka, memory store, offline, calibrate, devices, hours, port, start
-    _answers(monkeypatch, "1", "kafka", "", "", "", "3", "0.5", "", "y")
+    # server, kafka, memory store, offline, port, data dir, start
+    _answers(monkeypatch, "server", "kafka", "", "", "", "", "y")
     wizard.start(run=lambda cmd, check: ran.append(cmd), launch=launched.append)
     assert ran == [["docker", "compose", "up", "-d", "--wait", "kafka"]]
     assert launched == [
         [
             "--browser",
             "camoufox",
-            "demo",
+            "server",
             "--llm",
             "offline",
             "--queue",
             "kafka",
             "--store",
             "memory",
-            "--devices",
-            "3",
-            "--test-hours",
-            "0.5",
             "--port",
-            "8000",
+            "8080",
+            "--data-dir",
+            "artifacts/server",
         ]
     ]
     assert json.loads(wizard.SAVED.read_text())["queue"] == "kafka"
 
     # Second run: Enter keeps every saved answer, but each question is still asked.
     ran.clear(), launched.clear()
-    _answers(monkeypatch, *[""] * 8, "n")
+    _answers(monkeypatch, *[""] * 6, "n")
     wizard.start(run=lambda cmd, check: ran.append(cmd), launch=launched.append)
     assert not ran and not launched
 
-    # `logpipe demo` skips the first question.
-    _answers(monkeypatch, *[""] * 7, "n")
-    wizard.start(launch=launched.append, mode="demo")
+    # `logpipe server` skips the first question.
+    _answers(monkeypatch, *[""] * 5, "n")
+    wizard.start(launch=launched.append, mode="server")
 
 
 def test_pipeline_plan_calibrates_and_trains_only_when_missing(tmp_path):
@@ -96,23 +95,23 @@ def test_gemini_needs_no_sign_in(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(wizard.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
+    monkeypatch.setenv("LOGPIPE_ADMIN_PASSWORD", "long enough")
     ran, launched = [], []
-    # demo, memory, memory, web, gemini, chromium (offered first), recalibrate, sizes, port,
+    # server, memory, memory, web, gemini, chromium (offered first), port, data dir,
     # start, sign in? (Enter = no)
-    _answers(monkeypatch, "", "", "", "web", "gemini", "", "recalibrate", "", "", "", "y", "")
+    _answers(monkeypatch, "server", "", "", "web", "gemini", "", "", "", "y", "")
     wizard.start(run=lambda cmd, check: ran.append(cmd), launch=launched.append)
     assert not ran  # no login window, no camoufox download
     cmd = launched[0]
-    assert cmd[:2] == ["--browser", "chrome"] and "llm:web:gemini" in cmd and "--recalibrate" in cmd
-    assert json.loads(wizard.SAVED.read_text())["masks"] == "calibrate"
+    assert cmd[:2] == ["--browser", "chrome"] and "llm:web:gemini" in cmd
 
 
 def test_server_plan(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
     launched = []
-    # (server skips the mode question) memory, clickhouse, offline, port, data dir, demo?, start
-    _answers(monkeypatch, "", "clickhouse", "", "9090", "", "y", "n")
+    # (server skips the mode question) memory, clickhouse, offline, port, data dir, start
+    _answers(monkeypatch, "", "clickhouse", "", "9090", "", "n")
     wizard.start(launch=launched.append, mode="server")
     saved = json.loads(wizard.SAVED.read_text())
     assert wizard.plan(saved) == (
@@ -132,7 +131,6 @@ def test_server_plan(monkeypatch, tmp_path):
                 "9090",
                 "--data-dir",
                 "artifacts/server",
-                "--demo",
             ]
         ],
     )
@@ -163,7 +161,7 @@ def test_server_start_asks_the_admin_password_without_saving_it(monkeypatch, tmp
     monkeypatch.delenv("LOGPIPE_ADMIN_PASSWORD", raising=False)
     typed = iter(["short", "long enough", "long enough"])
     monkeypatch.setattr("getpass.getpass", lambda _prompt="": next(typed))
-    _answers(monkeypatch, "", "", "", "", "", "", "y")
+    _answers(monkeypatch, "", "", "", "", "", "y")
     wizard.start(launch=lambda cmd: None, mode="server")
     assert wizard.os.environ.pop("LOGPIPE_ADMIN_PASSWORD") == "long enough"
     assert "long enough" not in wizard.SAVED.read_text()
@@ -177,7 +175,6 @@ def test_mongodb_store_starts_the_mongo_service(tmp_path):
         "store": "mongodb",
         "server_port": 8080,
         "data_dir": str(tmp_path),
-        "with_demo": False,
     }
     services, commands = wizard.plan(a)
     assert services == ["mongo"] and commands[0][commands[0].index("--store") + 1] == "mongodb"
@@ -188,8 +185,8 @@ def test_answers_from_other_modes_are_kept(tmp_path, monkeypatch):
     wizard.SAVED.parent.mkdir()
     wizard.SAVED.write_text(json.dumps({"mode": "demo", "port": 8123, "site": "gemini"}))
     monkeypatch.setattr(wizard, "_free_port", lambda _: None)
-    # server: memory, memory, offline, port, data dir, demo?, start? no
-    _answers(monkeypatch, "", "", "offline", "", "", "", "n")
+    # server: memory, memory, offline, port, data dir, start? no
+    _answers(monkeypatch, "", "", "offline", "", "", "n")
     wizard.start(launch=lambda cmd: None, mode="server")
     saved = json.loads(wizard.SAVED.read_text())
     assert saved["mode"] == "server" and saved["port"] == 8123 and saved["site"] == "gemini"

@@ -92,7 +92,7 @@ function AboutServer() {
       <dt>CPU cores</dt><dd>{data.cpus}</dd>
       <dt>Metrics kept</dt><dd>{data.metrics_days} days</dd>
       <dt>Admin password</dt><dd>{data.password_set ? "set" : <span className="badge warn">not set: the UI is open to anyone who can reach it</span>}</dd>
-      <dt>API</dt><dd><a href="/api/docs">Interactive API docs</a> · <a href="/demo/">Developer demo</a></dd>
+      <dt>API</dt><dd><a href="/api/docs">Interactive API docs</a></dd>
     </dl>
   );
 }

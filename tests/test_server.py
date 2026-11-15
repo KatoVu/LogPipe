@@ -381,7 +381,6 @@ def test_streams_settings_query_stats(env):
     assert all(
         r["level"] for r in client.get("/api/logs", params={"minutes": 24 * 60}).json()["logs"]
     )
-    assert client.get("/demo/").status_code == 404
     assert client.get("/api/nope").status_code == 404
 
 

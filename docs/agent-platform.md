@@ -8,9 +8,6 @@ Three parts turn logpipe from a replay tool into a live service:
 | `logpipe server` | `logpipe/server/` (FastAPI) | agent intake, API keys, remote config, the setup → template review → per-stream LogBERT lifecycle, maintenance, jobs |
 | Operator UI | `web/` (React + Vite) | setup guide, overview, log explorer, templates, template review, query, analytics, anomaly alerts, maintenance, streams, jobs, agents, API keys |
 
-The developer demo (`logpipe demo`) is unchanged and is also mounted at `/demo/` by
-`logpipe server --demo`.
-
 ## Try it
 
 ```bash
@@ -36,7 +33,7 @@ for 15 minutes.
 Without Docker:
 
 ```bash
-uv run logpipe server                             # asks store/queue/LLM/port, like `logpipe demo`
+uv run logpipe server                             # asks store/queue/LLM/port
 uv run logpipe server --store memory              # or pass flags: API on :8080
 cd web && npm ci && npm run dev                   # UI on :5173 (proxies /api) or `npm run build`
 cd agent && go build -o logpipe-agent . && ./logpipe-agent -h

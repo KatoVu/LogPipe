@@ -27,8 +27,7 @@ make typecheck                       # pyright
 | A benchmark improves on purpose | refresh the gate baseline | `make data-loghub`, run the three reduced evals, `logpipe eval gate --write-baseline`, commit `eval/baseline.json` ([CI](../ci.md#refreshing-the-baseline)) |
 | A prompt changes | re-record LLM replies | `python -m logpipe.eval.rca_eval --llm … --record …`; replays fail loudly on unseen prompts |
 | Dependabot PR | review and merge | weekly uv (root + `DeepParse/`) and Actions updates, grouped minor + patch |
-| A web chat site breaks | fix selectors | add a selector at the front of the tuple in `ai_scraper/sites.py`; the capture in `DeepParse/.webchat/errors/` shows the page |
-| camoufox upgrades | refetch its browser | `make web-setup` |
+| A web chat site breaks | fix selectors | [Web chat: when a site changes](../getting-started/web-chat.md#when-a-site-changes) |
 | The mask model drifts | retrain on a GPU | `make retrain-data HOLDOUT=…`, `notebooks/colab_retrain.ipynb`, then `make retrain-eval MASKS=…` |
 | Server models go stale | retrain streams | PSI > 0.25 on **System → Model drift**, or automatic after `retrain_days` with unseen templates |
 | Docs change | nothing manual | `docs.yml` builds and publishes the site on push to `main` |
@@ -41,7 +40,6 @@ make typecheck                       # pyright
 | An alert storm after a rollout | fleet suppression (`fleet_min_devices`, `fleet_min_minutes`); retrain the stream so the new templates are known |
 | Ask says "insufficient evidence" | the report's **Ranking** tab: anchor, window, and each candidate's anomaly × rarity × proximity. "no baseline" means the store has no history before the window |
 | RCA misses a service that *called* the faulty one | known limit ([RCAEval findings](../benchmarks/rcaeval.md#findings)): use an LLM synthesizer |
-| Web LLM errors | `DeepParse/.webchat/errors/<time>_<site>_<Error>/`: `page.html`, `screenshot.png`, `error.json` |
 | Server errors | `--data-dir/server.log` (tracebacks); the console shows one line per warning |
 | A job failed | **Jobs** page: step log, retry |
 | An eval regression | `artifacts/eval/REPORT.md` vs `eval/baseline.json`; the nightly artifact `eval-report-<run>` |

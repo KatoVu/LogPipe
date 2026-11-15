@@ -226,12 +226,10 @@ to the settings behind the UI. One flag switches it: `--store mongodb`, or the
 
 | | |
 |---|---|
-| [Getting started](https://katovu.github.io/LogPipe/getting-started/) | install, every way to run it, all commands |
+| [Getting started](https://katovu.github.io/LogPipe/getting-started/) | install, LLM API setup, every way to run it, all commands |
 | [Architecture](https://katovu.github.io/LogPipe/architecture/) | parsing, online learning, LogBERT, server lifecycle, Ask & RCA, MCP, storage, with diagrams |
 | [Benchmarks](https://katovu.github.io/LogPipe/benchmarks/) | results, RCAEval, throughput |
 | [Guides](https://katovu.github.io/LogPipe/guides/code-structure/) | code structure, replacing components, configuration, Datadog, MongoDB, maintenance, CI |
-| [Security](https://katovu.github.io/LogPipe/security/) | threat model and defences |
-| [Design records](https://katovu.github.io/LogPipe/plan/) | personas, feature plans and technical decisions |
 
 ## Acknowledgements
 

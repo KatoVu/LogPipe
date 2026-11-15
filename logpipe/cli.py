@@ -7,7 +7,6 @@
 * ``train-logbert``: train the detector on per-device windows of parsed logs.
 * ``gen-iot``: write the synthetic IoT fleet to disk.
 * ``eval``: ``parsing`` | ``logbert`` | ``iot`` | ``alias`` benchmarks, ``report`` to summarise.
-* ``demo``: browser UI running a live synthetic IoT fleet through every stage.
 * ``start`` (also plain ``logpipe``): ask what to run, start Docker services, run it.
 """
 
@@ -249,40 +248,6 @@ def _gen_iot(args: argparse.Namespace) -> None:
     print(f"wrote history/validation/test logs and labels.tsv to {args.out}")
 
 
-def _demo(args: argparse.Namespace) -> None:
-    from .demo.server import Demo, save_registry, serve
-
-    if args.raw == ["demo"] and sys.stdin.isatty():  # no flags: ask instead
-        from .start import start
-
-        return start(mode="demo")
-
-    if args.save_registry:
-        save_registry(
-            args.save_registry,
-            devices=args.devices,
-            history_hours=args.history_hours,
-            llm=args.llm,
-            browser=args.browser,
-        )
-        return
-    demo = Demo(
-        devices=args.devices,
-        history_hours=args.history_hours,
-        test_hours=args.test_hours,
-        epochs=args.epochs,
-        enrich_every=args.enrich_every,
-        llm=args.llm,
-        queue=args.queue,
-        store=args.store,
-        registry_path=args.registry,
-        browser=args.browser,
-        cache_dir=Path("artifacts/demo"),
-        recalibrate=args.recalibrate,
-    )
-    serve(demo, args.host, args.port, args.rate)
-
-
 def _showcase(args: argparse.Namespace) -> None:
     from .showcase import run
 
@@ -318,7 +283,6 @@ def _server(args: argparse.Namespace) -> None:
         browser=args.browser,
         data_dir=args.data_dir,
         epochs=args.epochs,
-        demo=args.demo,
         datadog=_datadog(args),
         datadog_pull=args.datadog_pull,
     )
@@ -502,50 +466,6 @@ def main(argv: list[str] | None = None) -> None:
     gen.add_argument("--seed", type=int, default=7)
     gen.set_defaults(func=_gen_iot)
 
-    dm = sub.add_parser("demo", help="browser demo of the full pipeline on the synthetic fleet")
-    dm.add_argument("--host", default="127.0.0.1")
-    dm.add_argument("--port", type=int, default=8000)
-    dm.add_argument("--rate", type=float, default=25, help="lines per second to replay")
-    dm.add_argument("--devices", type=int, default=2, help="devices per kind")
-    dm.add_argument("--history-hours", type=float, default=2)
-    dm.add_argument("--test-hours", type=float, default=1)
-    dm.add_argument("--epochs", type=int, default=8)
-    dm.add_argument("--enrich-every", type=int, default=300)
-    dm.add_argument(
-        "--llm",
-        default="offline",
-        help="key naming + alias check (and masks when calibrating), e.g. llm:web:gemini",
-    )
-    dm.add_argument(
-        "--queue",
-        choices=["memory", "kafka"],
-        default="memory",
-        help="unresolved queue; kafka is started in Docker if needed",
-    )
-    dm.add_argument(
-        "--store",
-        choices=["memory", "clickhouse", "mongodb"],
-        default="memory",
-        help="clickhouse also writes every row there (started in Docker if needed)",
-    )
-    dm.add_argument(
-        "--registry",
-        type=Path,
-        help="load a saved registry (e.g. fine-tuned masks from Colab) instead of calibrating",
-    )
-    dm.add_argument(
-        "--recalibrate",
-        action="store_true",
-        help="redo the calibration cached in artifacts/demo/ (kept per mask backend and fleet size)",
-    )
-    dm.add_argument(
-        "--save-registry",
-        type=Path,
-        metavar="PATH",
-        help="calibrate the demo history with --llm, save the registry and exit (Colab: --llm hf)",
-    )
-    dm.set_defaults(func=_demo)
-
     sv = sub.add_parser("server", help="agent intake + operator UI (React) + learning lifecycle")
     sv.add_argument("--host", default="0.0.0.0")
     sv.add_argument("--port", type=int, default=8080)
@@ -569,7 +489,6 @@ def main(argv: list[str] | None = None) -> None:
         help="registry and per-stream LogBERT models",
     )
     sv.add_argument("--epochs", type=int, default=8, help="LogBERT epochs per stream")
-    sv.add_argument("--demo", action="store_true", help="also run the developer demo at /demo/")
     sv.set_defaults(func=_server)
 
     sc = sub.add_parser(
