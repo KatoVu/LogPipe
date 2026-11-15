@@ -1,0 +1,74 @@
+name: Agent release
+
+# logpipe-agent binaries (+ install.sh and checksums) on every v* release. A manual run builds
+# the same files as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, name: linux_amd64 }
+          - { goos: linux, goarch: arm64, name: linux_arm64 }
+          - { goos: linux, goarch: arm, goarm: "7", name: linux_armv7 }
+          - { goos: darwin, goarch: amd64, name: darwin_amd64 }
+          - { goos: darwin, goarch: arm64, name: darwin_arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Build
+        working-directory: agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
+        # Same flags as agent/Dockerfile.
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o dist/logpipe-agent .
+          tar -czf "dist/logpipe-agent_${{ matrix.name }}.tar.gz" -C dist logpipe-agent
+      - uses: actions/upload-artifact@v7
+        with:
+          name: logpipe-agent_${{ matrix.name }}
+          path: agent/dist/logpipe-agent_${{ matrix.name }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cp agent/install.sh dist/
+          cd dist && sha256sum logpipe-agent_*.tar.gz install.sh > checksums.txt && cat checksums.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: logpipe-agent-release
+          path: dist/*
+      - name: Attach to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
+          gh release upload "$TAG" dist/* --clobber
