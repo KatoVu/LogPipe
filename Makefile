@@ -50,6 +50,7 @@ help: ## list targets
 setup: ## install deps and create .env from the example
 	uv sync --group dev
 	@test -f .env || { cp .env.example .env; echo "created .env"; }
+	cd web && npm ci && npm run build;
 
 start: ## interactive: asks what to run (your logs or the server, Kafka or not), sets it up, runs it
 	$(RUN) logpipe start

@@ -51,7 +51,6 @@ See [Install](install.md) for details.
 
 ```sh
 make setup                                   # uv sync --group dev + .env
-cd web && npm ci && npm run build && cd ..   # builds the UI into logpipe/server/static
 docker compose up -d clickhouse              # or skip it and use --store memory
 uv run logpipe server --store clickhouse     # log in with changeme, then set your own
 ```
