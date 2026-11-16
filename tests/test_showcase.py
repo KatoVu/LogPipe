@@ -256,3 +256,20 @@ def test_ui_goto_counts_open_tabs_and_takes_only_local_paths(tmp_path, monkeypat
     client = app()
     assert client.post("/api/ui/goto", json={"path": "/setup?step=train"}).json() == {"tabs": 0}
     assert client.post("/api/ui/goto", json={"path": "//evil.example"}).status_code == 400
+
+
+def test_job_steps_moves_the_tab_to_each_job_once_it_runs():
+    jobs: list[dict] = []
+    shown: list[str] = []
+
+    class Follow:
+        def show(self, where: str) -> None:
+            shown.append(where)
+
+    steps = showcase._job_steps(lambda _: {"jobs": jobs}, "apply", follow=Follow())
+    jobs.append({"id": "a", "kind": "apply", "status": "queued", "created_at": "1", "log": []})
+    assert steps() == ["apply job started"] and shown == []
+    jobs[0]["status"] = "running"
+    steps()
+    steps()
+    assert shown == ["/jobs?open=a"]
