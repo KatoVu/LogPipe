@@ -32,6 +32,8 @@ from .generator import FILES, ShopGenerator
 
 ROOT = Path("artifacts/showcase")
 HOST = "shop-web-1"
+# an analysis that won't change any more (logpipe then posts it to Datadog)
+FINISHED = {PlanStatus.DONE, PlanStatus.FAILED, PlanStatus.REJECTED, PlanStatus.EXPIRED}
 PG_RULE = (
     "%{timestamp:ts} UTC [%{integer:pid}] LOG: duration: %{number:duration_ms} ms "
     "statement: %{data:statement}"
@@ -115,6 +117,7 @@ class Tour:
         self.api, self.url, self.auto = api, url, auto
         self._live = ""  # the counter line currently drawn under the cursor (terminal only)
         self._live_at = 0.0
+        self._opened = -1e9  # when the tour last opened a tab
 
     def act(self, n: int | str, title: str, lines: list[str]) -> None:
         print(f"\n{B}── Act {n}: {title} {'─' * max(0, 60 - len(title))}{R}")
@@ -124,9 +127,16 @@ class Tour:
     def show(self, where: str) -> None:
         """Open ``where`` (a UI path, or a full link) in the browser, so you land on what to look at."""
         url = where if where.startswith("http") else f"{self.url}{where}"
-        if not self.auto:
+        if not self.auto and not (where.startswith("/") and self._moved_tab(where)):
             _open_quietly(url)
+            self._opened = time.monotonic()
         self.say(f"→ look here: {url}", B, 2)
+
+    def _moved_tab(self, path: str) -> bool:
+        """Move the UI tab that's open to ``path``; False when there is none (you closed it).
+        A tab opened in the last two minutes may still be on the login page: it follows once in."""
+        tabs = _ask(lambda: self.api("/api/ui/goto", {"path": path})["tabs"], 0)
+        return tabs > 0 or time.monotonic() - self._opened < 120
 
     def say(self, text: str, style: str = D, indent: int = 4) -> None:
         """A line of output under the current act, wrapped to the terminal at spaces only, so a
@@ -265,10 +275,12 @@ def _drop_typed_ahead() -> None:
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
 
 
-def _job_steps(api: Api, *kinds: str) -> Callable[[], list[str]]:
-    """New steps of the ``kinds`` jobs started from now on, as the Jobs page logs them."""
+def _job_steps(api: Api, *kinds: str, follow: Tour | None = None) -> Callable[[], list[str]]:
+    """New steps of the ``kinds`` jobs started from now on, as the Jobs page logs them. With
+    ``follow``, the UI tab moves to each job on the Jobs page as it starts running."""
     old = {j["id"] for j in api("/api/jobs")["jobs"]}
     printed: dict[str, int] = {}
+    followed: set[str] = set()
 
     def new() -> list[str]:
         out = []
@@ -278,6 +290,9 @@ def _job_steps(api: Api, *kinds: str) -> Callable[[], list[str]]:
             log = [m for _, m in j.get("log") or []]
             if j["id"] not in printed:
                 out.append(f"{j['kind']} job started")
+            if follow and j["status"] == "running" and j["id"] not in followed:
+                followed.add(j["id"])  # jobs run one at a time: the tab follows the running one
+                follow.show(f"/jobs?open={j['id']}")
             out += log[printed.get(j["id"], 0) :]
             if j["status"] == "failed":
                 out.append(f"{j['kind']} job failed: {j.get('error')}")
@@ -304,7 +319,11 @@ def _interrupt(*_) -> None:
 
 
 def run(
-    port: int | None = None, auto: bool = False, ask: bool = True, datadog: bool = False
+    port: int | None = None,
+    auto: bool = False,
+    ask: bool = True,
+    datadog: bool = False,
+    fresh_templates: bool = False,
 ) -> None:
     from ..start import SAVED, _save, ask_setup, confirm, docker_up, load_env, plan
 
@@ -348,6 +367,13 @@ def run(
         env["WEB_BROWSER"] = a["browser"]  # was the --browser flag
     if dd:
         env |= dd.env(f"http://localhost:{port}")
+
+    # draft cache for fast run next time (since it always use log generator)
+    cache = ROOT.parent / f"showcase-drafts-{a.get('llm_kind', 'offline')}.json"
+    if fresh_templates:
+        cache.unlink(missing_ok=True)
+    env["LOGPIPE_DRAFT_CACHE"] = str(cache.resolve())
+    env["LOGPIPE_UI_GOTO"] = "1"  # the tour moves your one UI tab; off on any other server
     shutil.rmtree(ROOT, ignore_errors=True)
     (ROOT / "logs").mkdir(parents=True)
     need_docker()
@@ -602,6 +628,7 @@ def _tour(
             ),
             f"Then {B}Approve undecided{R} and {B}Apply … and train{R}: templates go live, stored lines are",
             "back-filled, and LogBERT trains on each service's sequence of templates.",
+            "Its progress shows on the guide's last step; the steps print here too.",
         ],
     )
 
@@ -628,14 +655,17 @@ def _tour(
         api(f"/api/review/{b['id']}/decide-all", {"status": "approved"})
         api(f"/api/review/{b['id']}/apply", {})
 
+    jobs = _job_steps(api, "apply", "retrain")  # from now: applying starts while you review
     t.wait(
-        "templates applied and the model trained",
-        review_done,
+        "your review applied",
+        lambda: batch() is None,
         do_review,
         live=reviewed,
-        steps=_job_steps(api, "apply", "retrain"),
-        show="/setup?step=train",
+        show="/setup?step=review",
+        steps=jobs,
     )
+    t.show("/setup?step=train")  # the guide's last step shows the apply and training progress
+    t.wait("templates applied and the model trained", review_done, live=reviewed, steps=jobs)
     t.pause()
 
     t.act(
@@ -744,6 +774,7 @@ def _tour(
             Y,
             2,
         )
+        t.show("/maintenance")
 
         def link() -> None:
             try:  # also closes its "new to a model" item
@@ -814,6 +845,13 @@ def _tour(
         live=inv_collected,
         steps=_job_steps(api, "draft"),
     )
+    t.show("/maintenance")
+    t.say(
+        f"Review them now in {B}Maintenance{R}: approve the inventory templates, then click {B}Add{R} "
+        "(the retrain request for LogBERT comes after that, on its own). Then the tab moves to Jobs.",
+        Y,
+        2,
+    )
 
     def inv_done() -> bool:
         return any(s["id"] == sid and s["calibrated"] for s in api("/api/sources")["sources"])
@@ -837,7 +875,7 @@ def _tour(
         inv_done,
         do_inv,
         live=inv_reviewed,
-        steps=_job_steps(api, "apply", "retrain"),
+        steps=_job_steps(api, "apply", "retrain", follow=t),
         show="/maintenance",
     )
 
@@ -949,8 +987,8 @@ def _ask_act(t: Tour, api: Api) -> None:
 # Datadog's search then lags behind its intake; that part wasn't measured.
 DD_WAIT = (
     "Datadog takes a while: the analysis takes about 15-40 s with Gemini in the browser (its LLM "
-    "call 14-27 s), logpipe posts the result within about 45 s, and Datadog's search can take "
-    "another minute or two to show it. Expect 1-3 minutes; nothing is stuck."
+    "call 14-27 s) and logpipe posts the result within 5 s. Datadog's events search lists it a "
+    "minute or two later; the tour doesn't wait for that."
 )
 
 
@@ -982,10 +1020,9 @@ def _dd_connected(t: Tour, dd: ShowcaseDatadog) -> None:
 def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
     t.say(
         "logpipe posts the incident to Datadog as an event, then starts a root-cause analysis by "
-        "itself (no approval needed: the Datadog integration runs it unattended) and posts its "
-        "answer as a second event. Nothing to click; watch it in the UI under Anomaly alerts → "
-        "the incident → Investigation. Only if you started it yourself there (Investigate) does it "
-        "wait for your approval: approve it on that page, or press Enter and I'll approve it.",
+        "itself and posts its answer as a second event. Watch it in the UI under Anomaly alerts → "
+        "the incident → Investigation. While Settings → Ask requires approval (the default), it "
+        "waits for you there: approve it on that page, or press Enter and I'll open it and approve it.",
     )
     t.say(DD_WAIT, Y)
     t.say(dd.links["events"])
@@ -999,8 +1036,28 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
     # first: that one waits for your approval like any Ask, so Enter approves it
     iid = t.api("/api/incidents")["incidents"][0]["id"]
 
-    def plan() -> dict | None:
-        return t.api(f"/api/incidents/{iid}").get("ask_plan")
+    _rca_wait(
+        t,
+        dd,
+        what="its root cause analysed",
+        plan=lambda: t.api(f"/api/incidents/{iid}").get("ask_plan"),
+        show=f"/alerts/{iid}",
+        give_up="not done yet; the analysis is still on the incident page, and posts when done.",
+    )
+    t.say(f"Each LLM step of that analysis, with prompts and tokens: {dd.links['llm']}")
+
+
+def _rca_wait(
+    t: Tour,
+    dd: ShowcaseDatadog,
+    *,
+    what: str,
+    plan: Callable[[], dict | None],
+    show: str,
+    give_up: str,
+) -> None:
+    """Until the analysis ``plan()`` has finished, not until Datadog's events search lists the
+    answer (a minute or two behind the post). Enter opens ``show`` and approves it if it waits."""
 
     def approve() -> None:
         if (p := plan()) and p["status"] == PlanStatus.WAITING:
@@ -1008,16 +1065,18 @@ def _dd_incident(t: Tour, dd: ShowcaseDatadog) -> None:
 
     live, steps = _rca_progress(plan)
     t.wait(
-        "its root cause posted to Datadog",
-        lambda: dd.event(f"logpipe RCA: {HOST}"),
+        what,
+        lambda: (p := plan()) is not None and p["status"] in FINISHED,
         approve,
         timeout=600,
         live=live,
         steps=steps,
-        show=f"/alerts/{iid}",
-        give_up="not posted yet; the analysis is still on the incident page, and posts when done.",
+        show=show,
+        give_up=give_up,
     )
-    t.say(f"Each LLM step of that analysis, with prompts and tokens: {dd.links['llm']}")
+    t.say(
+        f"logpipe posts the answer to Datadog within 5 s; it shows here shortly: {dd.links['events']}"
+    )
 
 
 def _rca_progress(
@@ -1079,23 +1138,20 @@ def _dd_webhook(t: Tour, dd: ShowcaseDatadog, token: str) -> None:
             "A Datadog monitor can call logpipe through a webhook (see docs/guides/datadog.md).",
             f"I'll send what one would: {B}[Triggered] shop-api error rate is high{R}.",
             "logpipe analyses the logs around that moment and posts the answer back as an event.",
-            f"{B}Nothing to do here:{R} I send it now, and the analysis runs by itself (no approval:",
-            "a webhook runs unattended).",
+            "I send it now. While Settings → Ask requires approval (the default), the analysis waits",
+            f"for you on the {B}Query → Ask{R} page: approve it there, or press Enter and I'll do it.",
         ],
     )
     t.say(DD_WAIT, Y)
-    title = "logpipe RCA: [Triggered]"
     plan_id = dd.webhook(t.url, token, "shop-api")
     t.say(f"sent; analysis {plan_id} started")
-    t.say(f"watch it: {t.url}/query?tab=ask&plan={plan_id}")
-    live, steps = _rca_progress(lambda: t.api(f"/api/ask/{plan_id}"))
-    t.wait(
-        "the answer posted to Datadog",
-        lambda: dd.event(title),
-        timeout=600,
-        live=live,
-        steps=steps,
-        give_up="not posted yet; the analysis is on the Query page under Ask, and posts when done.",
+    t.show(f"/query?tab=ask&plan={plan_id}")
+    _rca_wait(
+        t,
+        dd,
+        what="the alert analysed",
+        plan=lambda: t.api(f"/api/ask/{plan_id}"),
+        show=f"/query?tab=ask&plan={plan_id}",
+        give_up="not done yet; the analysis is on the Query page under Ask, and posts when done.",
     )
-    t.say(dd.links["events"])
     t.pause()

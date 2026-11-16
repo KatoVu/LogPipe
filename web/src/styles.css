@@ -925,3 +925,8 @@ details.sql-ref[open] > summary { margin-bottom: 8px; }
 .sql-cols code { font-size: 12.5px; }
 .sql-cols .ellipsis { display: block; max-width: 100%; }
 @media (max-width: 860px) { .sql-body { grid-template-columns: 1fr; } .sql-ref { max-height: none; } }
+
+/* One scroll box per panel (a job's steps, its details, the LLM activity): what's inside it
+   doesn't scroll on its own, so there is never a scroll box in a scroll box. */
+.scroll-box { max-height: min(50vh, 420px); overflow-y: auto; scrollbar-color: var(--line-strong) transparent; }
+.scroll-box pre.samples, .scroll-box .ask-ai-log, .scroll-box .ask-q-code .code-block { max-height: none; }

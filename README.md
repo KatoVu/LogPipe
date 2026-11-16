@@ -32,9 +32,6 @@ Needs Docker, [uv](https://docs.astral.sh/uv/) and Node.js.
 ```bash
 git clone https://github.com/KatoVu/LogPipe.git
 cd LogPipe
-cd web
-npm ci && npm run build   # the operator UI
-cd ..
 make setup                # Python deps, and .env from .env.example
 ```
 
@@ -147,7 +144,6 @@ Needs [uv](https://docs.astral.sh/uv/), Node 20+, Docker and `chromium` on your 
 ```sh
 git clone git@github.com:KatoVu/LogPipe.git && cd LogPipe
 make setup                                   # uv sync + .env
-cd web && npm ci && npm run build && cd ..   # UI into logpipe/server/static
 uv run logpipe start                         # pick "server", then Enter through the defaults
 ```
 

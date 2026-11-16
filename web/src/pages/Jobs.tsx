@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type Job, type Maintenance } from "../api";
-import { Card, Empty, JOB_NAMES, JobDetail, JobStatus, Loading, Meter, PageHead, Progress, TimeAgo, jobTarget, sourceLabel } from "../ui";
+import { Card, Empty, JOB_NAMES, JobDetail, JobLog, JobStatus, Loading, Meter, PageHead, Progress, TimeAgo, jobTarget, sourceLabel } from "../ui";
 
 function duration(job: Job, now: number) {
   if (!job.started_at) return "–";
@@ -67,7 +67,9 @@ const FILTERS = { all: () => true, active: (j: Job) => j.status === "queued" || 
 export default function Jobs() {
   const { data, error } = usePoll<{ jobs: Job[] }>("/api/jobs", 1500);
   const [filter, setFilter] = useState<keyof typeof FILTERS>("all");
-  const [open, setOpen] = useState<string | null>(null);
+  const asked = useSearchParams()[0].get("open"); // the showcase opens the job that's running
+  const [open, setOpen] = useState<string | null>(asked);
+  useEffect(() => { if (asked) { setOpen(asked); setFilter("all"); } }, [asked]); // a filter could hide the asked job
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const jobs = data?.jobs.filter(FILTERS[filter]) ?? [];
@@ -116,11 +118,7 @@ export default function Jobs() {
                                   <div className="grow"><strong>{j.error}</strong>{hint(j.error) && <div className="small">{hint(j.error)}</div>}</div>
                                 </div>
                               )}
-                              {j.log?.length ? (
-                                <ol className="job-log mono small">
-                                  {j.log.map(([t, m], i) => <li key={i}><span className="muted">{new Date(t).toLocaleTimeString()}</span>{m}</li>)}
-                                </ol>
-                              ) : <div className="muted small">No steps recorded.</div>}
+                              {j.log?.length ? <JobLog job={j} /> : <div className="muted small">No steps recorded.</div>}
                               <JobDetail job={j} steps={false} />
                             </td>
                           </tr>

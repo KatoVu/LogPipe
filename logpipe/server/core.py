@@ -886,12 +886,44 @@ class Server:
             },
         )
         if initial:
-            progress(0.35, f"mining templates from {len(lines)} lines (masks, Drain, field names)")
-            result = calibrate(lines, adapter)
-            entries = sorted(result.snapshot.templates.values(), key=lambda e: e.template_id)
-            templates = [NewTemplate(e.tokens, e.keys) for e in entries]
-            masks = list(result.snapshot.masks)
-            report = {"holdout_coverage": result.report.holdout_coverage}
+            cache = Path(self.config.server.draft_cache or "")
+            cached = None
+            if self.config.server.draft_cache and cache.exists():
+                try:
+                    c = json.loads(cache.read_text(encoding="utf-8"))
+                    cached = (
+                        [NewTemplate(tuple(t), tuple(k)) for t, k in c["templates"]],
+                        [Mask.from_dict(m) for m in c["masks"]],
+                        c["report"],
+                    )
+                except (OSError, ValueError, KeyError, TypeError):
+                    LOGGER.warning("draft cache %s is unreadable; mining templates instead", cache)
+            if cached:
+                progress(0.35, f"templates from the showcase cache {cache}")
+                templates, masks, report = cached
+            else:
+                progress(
+                    0.35, f"mining templates from {len(lines)} lines (masks, Drain, field names)"
+                )
+                result = calibrate(lines, adapter)
+                entries = sorted(result.snapshot.templates.values(), key=lambda e: e.template_id)
+                templates = [NewTemplate(e.tokens, e.keys) for e in entries]
+                masks = list(result.snapshot.masks)
+                report = {"holdout_coverage": result.report.holdout_coverage}
+                if self.config.server.draft_cache:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = cache.with_name(cache.name + ".tmp")
+                    tmp.write_text(
+                        json.dumps(
+                            {
+                                "templates": [[t.tokens, t.keys] for t in templates],
+                                "masks": [m.to_dict() for m in masks],
+                                "report": report,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    tmp.replace(cache)  # atomic: a stop mid-write never leaves a cut-short cache
         else:
             progress(
                 0.35, f"mining templates for lines the parser can't match ({len(lines)} sampled)"

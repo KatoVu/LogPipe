@@ -186,3 +186,90 @@ def test_rca_progress_reads_full_plans_and_survives_partial_ones():
         current[0] = next(plans)
         assert want in live()
     assert steps() == ["LLM synthesize: done in 27 s"] and steps() == []
+
+
+def test_the_first_draft_is_cached_for_the_next_showcase(tmp_path, monkeypatch):
+    from logpipe.server import core
+    from logpipe.settings import get_settings
+
+    monkeypatch.setenv("LOGPIPE_DRAFT_CACHE", str(tmp_path / "drafts.json"))
+    get_settings.cache_clear()
+    g, t0 = ShopGenerator(tmp_path / "out"), datetime.now(UTC) - timedelta(minutes=30)
+
+    def drafted() -> list[str]:
+        server = Server(
+            MemoryStore(),
+            ControlStore(),
+            data_dir=tmp_path / str(len(list(tmp_path.iterdir()))),
+            adapter_factory=lambda: get_adapter("offline"),
+            start_threads=False,
+        )
+        client = TestClient(create_app(server))
+        headers = {"X-API-Key": client.post("/api/keys", json={"name": "t"}).json()["token"]}
+        evs = [
+            {
+                "ts": (t0 + timedelta(seconds=i)).isoformat(),
+                "host": "shop",
+                "service": e.service,
+                "source": FILES[e.service][1],
+                "message": e.message,
+            }
+            for i in range(300)
+            for e in g.order(t0 + timedelta(seconds=i))
+        ]
+        client.post("/intake/v1/logs", json={"events": evs}, headers=headers)
+        while not server.inbox.empty():
+            server.process(server.inbox.get_nowait())
+        client.post("/api/review/generate", json={})
+        while not server.jobs.empty():
+            assert server.run_job(server.jobs.get_nowait())["status"] == "done"
+        bid = client.get("/api/setup").json()["review"]["id"]
+        return sorted(
+            " ".join(d["tokens"]) for d in client.get(f"/api/review/{bid}").json()["drafts"]
+        )
+
+    first = drafted()
+    assert (tmp_path / "drafts.json").exists()
+    monkeypatch.setattr(core, "calibrate", lambda *a: pytest.fail("the cache was not used"))
+    assert drafted() == first
+
+
+def test_ui_goto_counts_open_tabs_and_takes_only_local_paths(tmp_path, monkeypatch):
+    from logpipe.settings import get_settings
+
+    def app():
+        get_settings.cache_clear()
+        return TestClient(
+            create_app(
+                Server(
+                    MemoryStore(),
+                    ControlStore(),
+                    data_dir=tmp_path,
+                    adapter_factory=lambda: get_adapter("offline"),
+                    start_threads=False,
+                )
+            )
+        )
+
+    assert app().post("/api/ui/goto", json={"path": "/setup"}).status_code in (404, 405)
+    monkeypatch.setenv("LOGPIPE_UI_GOTO", "1")
+    client = app()
+    assert client.post("/api/ui/goto", json={"path": "/setup?step=train"}).json() == {"tabs": 0}
+    assert client.post("/api/ui/goto", json={"path": "//evil.example"}).status_code == 400
+
+
+def test_job_steps_moves_the_tab_to_each_job_once_it_runs():
+    jobs: list[dict] = []
+    shown: list[str] = []
+
+    class Follow:
+        def show(self, where: str) -> None:
+            shown.append(where)
+
+    steps = showcase._job_steps(lambda _: {"jobs": jobs}, "apply", follow=Follow())
+    jobs.append({"id": "a", "kind": "apply", "status": "queued", "created_at": "1", "log": []})
+    assert steps() == ["apply job started"] and shown == []
+    jobs[0]["status"] = "running"
+    steps()
+    steps()
+    assert shown == ["/jobs?open=a"]

@@ -47,9 +47,10 @@ help: ## list targets
 
 ## --- setup ------------------------------------------------------------------
 
-setup: ## install deps and create .env from the example
+setup: ## install deps, create .env from the example, build the web UI (needs Node 22+)
 	uv sync --group dev
 	@test -f .env || { cp .env.example .env; echo "created .env"; }
+	cd web && npm ci && npm run build;
 
 start: ## interactive: asks what to run (your logs or the server, Kafka or not), sets it up, runs it
 	$(RUN) logpipe start
