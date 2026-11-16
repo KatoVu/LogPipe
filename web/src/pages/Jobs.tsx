@@ -69,7 +69,7 @@ export default function Jobs() {
   const [filter, setFilter] = useState<keyof typeof FILTERS>("all");
   const asked = useSearchParams()[0].get("open"); // the showcase opens the job that's running
   const [open, setOpen] = useState<string | null>(asked);
-  useEffect(() => { if (asked) setOpen(asked); }, [asked]);
+  useEffect(() => { if (asked) { setOpen(asked); setFilter("all"); } }, [asked]); // a filter could hide the asked job
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const jobs = data?.jobs.filter(FILTERS[filter]) ?? [];

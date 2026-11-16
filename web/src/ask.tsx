@@ -653,7 +653,8 @@ const DOT: Partial<Record<AskPlan["status"], string>> = { done: "done", waiting_
 export function AskPanel({ initialPlan }: { initialPlan?: string }) {
   const [question, setQuestion] = useState("");
   const [thread, setThread] = useState<string[]>(initialPlan ? [initialPlan] : []);
-  useEffect(() => { if (initialPlan) setThread([initialPlan]); }, [initialPlan]); // the showcase moves this tab to another plan
+  const gen = useRef(0); // bumps on a plan switch so a question asked before it lands nowhere
+  useEffect(() => { if (initialPlan) { gen.current++; setThread([initialPlan]); } }, [initialPlan]); // the showcase moves this tab to another plan
   const recent = usePoll<{ plans: Recent[]; require_approval: boolean; llm_timeout_seconds: number }>("/api/ask", 10000).data;
   const serverRequires = recent?.require_approval ?? true;
   const [mine, setMine] = useState(true);  // only matters when the server lets queries run unapproved
@@ -666,7 +667,8 @@ export function AskPanel({ initialPlan }: { initialPlan?: string }) {
   const submit = (q: string) => {
     if (!q.trim() || ask.isPending) return;
     setQuestion("");
-    ask.mutate(q.trim(), { onSuccess: (p) => setThread((t) => [...t, p.id]), onError: () => setQuestion(q) });
+    const g = gen.current;
+    ask.mutate(q.trim(), { onSuccess: (p) => { if (g === gen.current) setThread((t) => [...t, p.id]); }, onError: () => { if (g === gen.current) setQuestion(q); } });
   };
   const fresh = () => { setThread([]); input.current?.focus(); };
   return (

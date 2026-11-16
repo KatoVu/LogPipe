@@ -662,6 +662,7 @@ def _tour(
         do_review,
         live=reviewed,
         show="/setup?step=review",
+        steps=jobs,
     )
     t.show("/setup?step=train")  # the guide's last step shows the apply and training progress
     t.wait("templates applied and the model trained", review_done, live=reviewed, steps=jobs)

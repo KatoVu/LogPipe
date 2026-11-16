@@ -46,11 +46,11 @@ Keep both volumes when you upgrade (`docker compose pull server && docker compos
 
 ## From source
 
-Needs [uv](https://docs.astral.sh/uv/), Node 20+ (to build the UI) and Docker (for ClickHouse).
+Needs [uv](https://docs.astral.sh/uv/), Node 22+ (`make setup` builds the UI) and Docker (for ClickHouse).
 See [Install](install.md) for details.
 
 ```sh
-make setup                                   # uv sync --group dev + .env
+make setup                                   # uv sync --group dev + .env + web build
 docker compose up -d clickhouse              # or skip it and use --store memory
 uv run logpipe server --store clickhouse     # log in with changeme, then set your own
 ```

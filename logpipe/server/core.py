@@ -887,12 +887,20 @@ class Server:
         )
         if initial:
             cache = Path(self.config.server.draft_cache or "")
+            cached = None
             if self.config.server.draft_cache and cache.exists():
+                try:
+                    c = json.loads(cache.read_text(encoding="utf-8"))
+                    cached = (
+                        [NewTemplate(tuple(t), tuple(k)) for t, k in c["templates"]],
+                        [Mask.from_dict(m) for m in c["masks"]],
+                        c["report"],
+                    )
+                except (OSError, ValueError, KeyError, TypeError):
+                    LOGGER.warning("draft cache %s is unreadable; mining templates instead", cache)
+            if cached:
                 progress(0.35, f"templates from the showcase cache {cache}")
-                c = json.loads(cache.read_text(encoding="utf-8"))
-                templates = [NewTemplate(tuple(t), tuple(k)) for t, k in c["templates"]]
-                masks = [Mask.from_dict(m) for m in c["masks"]]
-                report = c["report"]
+                templates, masks, report = cached
             else:
                 progress(
                     0.35, f"mining templates from {len(lines)} lines (masks, Drain, field names)"
@@ -904,7 +912,8 @@ class Server:
                 report = {"holdout_coverage": result.report.holdout_coverage}
                 if self.config.server.draft_cache:
                     cache.parent.mkdir(parents=True, exist_ok=True)
-                    cache.write_text(
+                    tmp = cache.with_name(cache.name + ".tmp")
+                    tmp.write_text(
                         json.dumps(
                             {
                                 "templates": [[t.tokens, t.keys] for t in templates],
@@ -914,6 +923,7 @@ class Server:
                         ),
                         encoding="utf-8",
                     )
+                    tmp.replace(cache)  # atomic: a stop mid-write never leaves a cut-short cache
         else:
             progress(
                 0.35, f"mining templates for lines the parser can't match ({len(lines)} sampled)"

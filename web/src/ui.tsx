@@ -119,7 +119,7 @@ function DetailValue({ v }: { v: unknown }) {
 
 /** For a scroll box that grows (a job's steps, LLM activity): it stays at the newest line,
  * unless you scrolled up to read; ``size`` changes when something was added. */
-export function useFollow<T extends HTMLElement>(size: number) {
+export function useFollow<T extends HTMLElement>(size: unknown) {
   const ref = useRef<T>(null);
   const atEnd = useRef(true);
   useEffect(() => {
@@ -135,7 +135,7 @@ export function useFollow<T extends HTMLElement>(size: number) {
 /** A job's steps, one per line with its time, in a box that follows the newest. */
 export function JobLog({ job }: { job: Job }) {
   const log = job.log ?? [];
-  const follow = useFollow<HTMLOListElement>(log.length);
+  const follow = useFollow<HTMLOListElement>(`${log.length}:${log.at(-1)?.join()}`); // the log is capped, so its length stops changing
   return (
     <ol className="job-log mono small scroll-box" {...follow}>
       {log.map(([t, m], i) => <li key={i}><span className="muted">{new Date(t).toLocaleTimeString()}</span>{m}</li>)}
