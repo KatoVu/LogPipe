@@ -628,7 +628,7 @@ def _tour(
             ),
             f"Then {B}Approve undecided{R} and {B}Apply … and train{R}: templates go live, stored lines are",
             "back-filled, and LogBERT trains on each service's sequence of templates.",
-            f"Once you apply, the tab moves to {B}Jobs{R}: each job opens there as it runs, with its steps.",
+            "Its progress shows on the guide's last step; the steps print here too.",
         ],
     )
 
@@ -655,14 +655,16 @@ def _tour(
         api(f"/api/review/{b['id']}/decide-all", {"status": "approved"})
         api(f"/api/review/{b['id']}/apply", {})
 
+    jobs = _job_steps(api, "apply", "retrain")  # from now: applying starts while you review
     t.wait(
-        "templates applied and the model trained",
-        review_done,
+        "your review applied",
+        lambda: batch() is None,
         do_review,
         live=reviewed,
-        steps=_job_steps(api, "apply", "retrain", follow=t),
-        show="/setup?step=train",
+        show="/setup?step=review",
     )
+    t.show("/setup?step=train")  # the guide's last step shows the apply and training progress
+    t.wait("templates applied and the model trained", review_done, live=reviewed, steps=jobs)
     t.pause()
 
     t.act(
@@ -1142,6 +1144,7 @@ def _dd_webhook(t: Tour, dd: ShowcaseDatadog, token: str) -> None:
     t.say(DD_WAIT, Y)
     plan_id = dd.webhook(t.url, token, "shop-api")
     t.say(f"sent; analysis {plan_id} started")
+    t.show(f"/query?tab=ask&plan={plan_id}")
     _rca_wait(
         t,
         dd,

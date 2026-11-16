@@ -652,6 +652,7 @@ const DOT: Partial<Record<AskPlan["status"], string>> = { done: "done", waiting_
 export function AskPanel({ initialPlan }: { initialPlan?: string }) {
   const [question, setQuestion] = useState("");
   const [thread, setThread] = useState<string[]>(initialPlan ? [initialPlan] : []);
+  useEffect(() => { if (initialPlan) setThread([initialPlan]); }, [initialPlan]); // the showcase moves this tab to another plan
   const recent = usePoll<{ plans: Recent[]; require_approval: boolean; llm_timeout_seconds: number }>("/api/ask", 10000).data;
   const serverRequires = recent?.require_approval ?? true;
   const [mine, setMine] = useState(true);  // only matters when the server lets queries run unapproved
