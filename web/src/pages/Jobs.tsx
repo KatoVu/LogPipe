@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type Job, type Maintenance } from "../api";
-import { Card, Empty, JOB_NAMES, JobDetail, JobStatus, Loading, Meter, PageHead, Progress, TimeAgo, jobTarget, sourceLabel } from "../ui";
+import { Card, Empty, JOB_NAMES, JobDetail, JobLog, JobStatus, Loading, Meter, PageHead, Progress, TimeAgo, jobTarget, sourceLabel } from "../ui";
 
 function duration(job: Job, now: number) {
   if (!job.started_at) return "–";
@@ -118,11 +118,7 @@ export default function Jobs() {
                                   <div className="grow"><strong>{j.error}</strong>{hint(j.error) && <div className="small">{hint(j.error)}</div>}</div>
                                 </div>
                               )}
-                              {j.log?.length ? (
-                                <ol className="job-log mono small">
-                                  {j.log.map(([t, m], i) => <li key={i}><span className="muted">{new Date(t).toLocaleTimeString()}</span>{m}</li>)}
-                                </ol>
-                              ) : <div className="muted small">No steps recorded.</div>}
+                              {j.log?.length ? <JobLog job={j} /> : <div className="muted small">No steps recorded.</div>}
                               <JobDetail job={j} steps={false} />
                             </td>
                           </tr>

@@ -117,19 +117,46 @@ function DetailValue({ v }: { v: unknown }) {
   return <span className="mono">{v == null ? "–" : String(v)}</span>;
 }
 
-/** What a draft or training job took in, the LLM prompts it sent and what came back; collapsed by default. */
+/** For a scroll box that grows (a job's steps, LLM activity): it stays at the newest line,
+ * unless you scrolled up to read; ``size`` changes when something was added. */
+export function useFollow<T extends HTMLElement>(size: number) {
+  const ref = useRef<T>(null);
+  const atEnd = useRef(true);
+  useEffect(() => {
+    if (ref.current && atEnd.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [size]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
+  return { ref, onScroll };
+}
+
+/** A job's steps, one per line with its time, in a box that follows the newest. */
+export function JobLog({ job }: { job: Job }) {
+  const log = job.log ?? [];
+  const follow = useFollow<HTMLOListElement>(log.length);
+  return (
+    <ol className="job-log mono small scroll-box" {...follow}>
+      {log.map(([t, m], i) => <li key={i}><span className="muted">{new Date(t).toLocaleTimeString()}</span>{m}</li>)}
+    </ol>
+  );
+}
+
+/** What a draft or training job took in, the LLM prompts it sent and what came back; collapsed by default.
+ * One scroll box for all of it: the prompts and samples inside don't scroll on their own. */
 export function JobDetail({ job, steps = true }: { job: Job; steps?: boolean }) {
   const detail = Object.entries(job.detail ?? {});
   if (!detail.length && !(steps && job.log?.length)) return null;
   return (
     <details className="job-detail-panel">
       <summary>Details: steps, input, prompts, output</summary>
-      {steps && !!job.log?.length && (
-        <section><h4>Steps</h4>
-          <pre className="samples">{job.log.map(([t, m]) => `${new Date(t).toLocaleTimeString()}  ${m}`).join("\n")}</pre>
-        </section>
+      {steps && !!job.log?.length && <section><h4>Steps</h4><JobLog job={job} /></section>}
+      {detail.length > 0 && (
+        <div className="scroll-box">
+          {detail.map(([k, v]) => <section key={k}><h4>{k}</h4><DetailValue v={v} /></section>)}
+        </div>
       )}
-      {detail.map(([k, v]) => <section key={k}><h4>{k}</h4><DetailValue v={v} /></section>)}
     </details>
   );
 }

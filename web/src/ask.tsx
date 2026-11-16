@@ -6,7 +6,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Link } from "react-router-dom";
 import { api, useAction, usePoll } from "./api";
 import { AutoChart, LEVELS, Timeline } from "./charts";
-import { Card, CopyBlock, Empty, Switch, TimeAgo, time } from "./ui";
+import { Card, CopyBlock, Empty, Switch, TimeAgo, time, useFollow } from "./ui";
 
 export interface AskQuery {
   id: string; tool: string; title: string; why: string; compiled: string; engine: string;
@@ -256,6 +256,7 @@ function AiActivity({ steps }: { steps: AiStep[] }) {
   useEffect(() => { if (runningSince) setOpen(true); }, [runningSince]);  // a new call opens it again
   const total = steps.reduce((a, s) => a + (s.seconds ?? 0), 0);
   const failed = steps.filter((s) => s.status === "failed").length;
+  const follow = useFollow<HTMLOListElement>(steps.reduce((n, s) => n + 1 + s.messages.length, 0));
   return (
     <details className={`ask-ai${running ? " is-running" : ""}`} open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
       <summary>
@@ -265,7 +266,7 @@ function AiActivity({ steps }: { steps: AiStep[] }) {
             {failed > 0 && <span className="badge bad" style={{ marginLeft: 6 }}>{failed} failed</span>}</>}</span>
         <span className="muted small">{open ? "Hide" : "Show"}</span>
       </summary>
-      <ol className="ask-ai-steps">
+      <ol className="ask-ai-steps scroll-box" {...follow}>
         {steps.map((s, i) => <AiStepView key={i} s={s} />)}
       </ol>
     </details>
