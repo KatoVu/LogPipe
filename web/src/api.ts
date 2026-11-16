@@ -1,6 +1,7 @@
 // Thin typed client for `logpipe server`'s /api.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import type { AskPlan, AskResult } from "./ask";
 
 export class ApiError extends Error {}
@@ -36,12 +37,15 @@ export function usePoll<T>(path: string | null, every = 2000) {
  * pushed config) over server-sent events; polling stays as the fallback. */
 export function useServerEvents() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   useEffect(() => {
     const es = new EventSource("/api/events");
     es.addEventListener("change", () =>
       qc.invalidateQueries({ predicate: (q) => /^\/api\/(agents|overview|setup|review|maintenance|jobs)/.test(String(q.queryKey[0])) }));
+    // the showcase moves this tab to the page of its current step instead of opening a new one
+    es.addEventListener("goto", (e) => { navigate(JSON.parse((e as MessageEvent).data).path); window.focus(); });
     return () => es.close();
-  }, [qc]);
+  }, [qc, navigate]);
 }
 
 /** A POST/PUT/DELETE that refreshes every query afterwards (the UI is small; that's cheap). */

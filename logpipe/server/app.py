@@ -284,17 +284,44 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
     def intake_config(hostname: str, key: Annotated[dict, Depends(agent_key)]) -> dict:
         return {"yaml": (server.control.get("remote", hostname) or {}).get("yaml", "")}
 
+    ui = {"path": "", "seq": 0, "delivered": False, "tabs": 0}  # the UI tabs' event streams
+
+    if server.config.server.ui_goto:  # only the showcase's server has it, never a deployment
+
+        @app.post("/api/ui/goto")
+        async def ui_goto(body: Annotated[dict, Body()]) -> dict:
+            """Send the open UI tabs to ``path`` (the showcase uses one tab, not one per step);
+            ``tabs`` 0 means none is open, so the caller opens one."""
+            path = str(body.get("path", ""))
+            if not path.startswith("/") or path.startswith("//"):
+                raise HTTPException(400, "path must be a path on this server")
+            ui.update(path=path, seq=ui["seq"] + 1, delivered=False)
+            server.events.notify()
+            return {"tabs": ui["tabs"]}
+
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:
         """Server-sent events: one ``change`` per agent/fleet change, so the UI refetches at once."""
         server.events.bind()
 
         async def stream():
-            yield "retry: 1000\n\n"
-            while not await request.is_disconnected():
-                yield (
-                    "event: change\ndata: {}\n\n" if await server.events.wait(15) else ": ping\n\n"
-                )
+            ui["tabs"] += 1
+            # a fresh tab gets a page no tab has shown yet (the showcase opened it before you logged in)
+            seen = ui["seq"] if ui["delivered"] else 0
+            try:
+                yield "retry: 1000\n\n"
+                while not await request.is_disconnected():
+                    if ui["seq"] > seen:
+                        seen, ui["delivered"] = ui["seq"], True
+                        yield f"event: goto\ndata: {json.dumps({'path': ui['path']})}\n\n"
+                        continue
+                    yield (
+                        "event: change\ndata: {}\n\n"
+                        if await server.events.wait(15)
+                        else ": ping\n\n"
+                    )
+            finally:
+                ui["tabs"] -= 1
 
         return StreamingResponse(
             stream(),

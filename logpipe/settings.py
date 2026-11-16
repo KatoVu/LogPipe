@@ -98,6 +98,8 @@ class ServerSettings(BaseSettings):
     max_query_rows: int = 500  # rows the Query page returns
     max_builder_rows: int = 500  # LIMIT the visual builder may ask for
     review_samples: int = 5  # example lines shown per draft template
+    draft_cache: str | None = None
+    ui_goto: bool = False  # `logpipe showcase` only: POST /api/ui/goto moves the open UI tabs
     review_check_lines: int = 20_000  # stored lines a draft rule is checked against
     drift_keep: int = 2000  # live windows kept per stream
     drift_min_live: int = 200  # fewer live windows than this: no PSI yet

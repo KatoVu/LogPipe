@@ -250,7 +250,13 @@ def _gen_iot(args: argparse.Namespace) -> None:
 def _showcase(args: argparse.Namespace) -> None:
     from .showcase import run
 
-    run(port=args.port, auto=args.auto, ask=not args.no_ask, datadog=args.datadog)
+    run(
+        port=args.port,
+        auto=args.auto,
+        ask=not args.no_ask,
+        datadog=args.datadog,
+        fresh_templates=args.fresh_templates,
+    )
 
 
 def _bench(args: argparse.Namespace) -> None:
@@ -498,6 +504,11 @@ def main(argv: list[str] | None = None) -> None:
         "--datadog",
         action="store_true",
         help="also the Datadog integration: Agent, events, RCA, grok pipeline, webhook (DD_API_KEY + DD_APP_KEY)",
+    )
+    sc.add_argument(
+        "--fresh-templates",
+        action="store_true",
+        help="draft the first templates again instead of reusing the last showcase's (artifacts/showcase-drafts-*.json)",
     )
     sc.set_defaults(func=_showcase)
 

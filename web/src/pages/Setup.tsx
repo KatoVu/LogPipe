@@ -1,6 +1,6 @@
 // The setup guide, one step per screen: key -> agents -> sources -> sample -> streams ->
 // review templates -> train. The stepper shows where you are; finished steps can be revisited.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, useAction, usePoll, type Batch, type Job, type Settings, type Source, type Stream } from "../api";
 import { Card, JobRow, Loading, Meter, PageHead, Stepper, TimeAgo, fmt, sourceLabel } from "../ui";
@@ -43,6 +43,7 @@ export default function Setup() {
   const [params] = useSearchParams();
   const asked = STEP_KEYS.indexOf(params.get("step") ?? "");
   const [picked, setPicked] = useState<number | null>(asked >= 0 ? asked : null);
+  useEffect(() => { if (asked >= 0) setPicked(asked); }, [asked]); // the showcase moves this tab between steps
   const [token, setToken] = useState("");
   const [cap, setCap] = useState<number | null>(null);
   const [streamsSeen, setStreamsSeen] = useState(false);

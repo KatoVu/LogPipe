@@ -115,6 +115,7 @@ class Tour:
         self.api, self.url, self.auto = api, url, auto
         self._live = ""  # the counter line currently drawn under the cursor (terminal only)
         self._live_at = 0.0
+        self._opened = -1e9  # when the tour last opened a tab
 
     def act(self, n: int | str, title: str, lines: list[str]) -> None:
         print(f"\n{B}── Act {n}: {title} {'─' * max(0, 60 - len(title))}{R}")
@@ -124,9 +125,16 @@ class Tour:
     def show(self, where: str) -> None:
         """Open ``where`` (a UI path, or a full link) in the browser, so you land on what to look at."""
         url = where if where.startswith("http") else f"{self.url}{where}"
-        if not self.auto:
+        if not self.auto and not (where.startswith("/") and self._moved_tab(where)):
             _open_quietly(url)
+            self._opened = time.monotonic()
         self.say(f"→ look here: {url}", B, 2)
+
+    def _moved_tab(self, path: str) -> bool:
+        """Move the UI tab that's open to ``path``; False when there is none (you closed it).
+        A tab opened in the last two minutes may still be on the login page: it follows once in."""
+        tabs = _ask(lambda: self.api("/api/ui/goto", {"path": path})["tabs"], 0)
+        return tabs > 0 or time.monotonic() - self._opened < 120
 
     def say(self, text: str, style: str = D, indent: int = 4) -> None:
         """A line of output under the current act, wrapped to the terminal at spaces only, so a
@@ -304,7 +312,11 @@ def _interrupt(*_) -> None:
 
 
 def run(
-    port: int | None = None, auto: bool = False, ask: bool = True, datadog: bool = False
+    port: int | None = None,
+    auto: bool = False,
+    ask: bool = True,
+    datadog: bool = False,
+    fresh_templates: bool = False,
 ) -> None:
     from ..start import SAVED, _save, ask_setup, confirm, docker_up, load_env, plan
 
@@ -348,6 +360,13 @@ def run(
         env["WEB_BROWSER"] = a["browser"]  # was the --browser flag
     if dd:
         env |= dd.env(f"http://localhost:{port}")
+
+    # draft cache for fast run next time (since it always use log generator)
+    cache = ROOT.parent / f"showcase-drafts-{a.get('llm_kind', 'offline')}.json"
+    if fresh_templates:
+        cache.unlink(missing_ok=True)
+    env["LOGPIPE_DRAFT_CACHE"] = str(cache.resolve())
+    env["LOGPIPE_UI_GOTO"] = "1"  # the tour moves your one UI tab; off on any other server
     shutil.rmtree(ROOT, ignore_errors=True)
     (ROOT / "logs").mkdir(parents=True)
     need_docker()
