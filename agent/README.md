@@ -124,6 +124,7 @@ logs:
     source: java
     tags: [team:payments]
     start_position: end         # end (default) or beginning, for files seen the first time
+    ignore_older_than: 24h      # release a file once a newer one in its series exists and it is this quiet; 0 = never
     log_processing_rules:
       - type: multi_line        # lines not matching start a continuation of the previous event
         name: new_event
@@ -153,6 +154,17 @@ logs:
 - **Files**: globs are re-checked every 250 ms; rotation (rename + new file) and copytruncate are
   both followed. Offsets are saved to `run/positions.json`, so a restart neither resends nor
   skips lines (a half-written last line is re-read, never split).
+- **File identity**: a file is its device + inode + a hash of its first 1 KB, not its name. A file
+  renamed inside the glob (`app.log` -> `app.log.1`, even while the agent is stopped) keeps its
+  offset instead of being read again, and a new file that reuses a deleted file's inode is read
+  from its start.
+- **Log series**: `app.log`, `app.log.3`, `app.001.log`, `app-2026-11-17.log` and `app.log.1.gz`
+  are one series, `app`, which is also the service when `service:` is unset. Once a newer file of
+  the series exists and an older one has been quiet for `ignore_older_than` (default 24h), the old
+  one is drained and closed and listed under `skipped_files` in `status`. It is still checked: a
+  write to it reopens it at its offset. A quiet file with no newer sibling (`error.log`) is never
+  released. On the first start, released files are not replayed even with
+  `start_position: beginning`; set `ignore_older_than: 0` to backfill an archive.
 - **Shipping**: batches of up to 500 events or 1 s as **OpenTelemetry OTLP/HTTP** (JSON, gzip) to
   `POST /v1/logs` with `X-API-Key`: resource `host.name`, `service.name`, `os.type`,
   `host.arch`; per record the body, `observedTimeUnixNano`, `log.file.path`/`log.file.name`.

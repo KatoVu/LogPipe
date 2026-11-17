@@ -349,6 +349,7 @@ export interface AgentSource {
   bytes: number;
   last_line_at?: string;
   files?: string[];
+  skipped_files?: string[];
   error?: string;
 }
 

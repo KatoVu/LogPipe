@@ -5,7 +5,7 @@ import { agentProblem } from "./Agents";
 import { Card, Empty, Loading, PageHead, TimeAgo, bytes, fmt } from "../ui";
 
 const SNIPPETS: Record<string, string> = {
-  "File": "  - type: file\n    path: /var/log/myapp/*.log\n    service: myapp\n    source: java\n    log_processing_rules:\n      - type: multi_line\n        name: new_event\n        pattern: '^\\d{4}-\\d{2}-\\d{2}'\n",
+  "File": "  - type: file\n    path: /var/log/myapp/*.log\n    service: myapp\n    source: java\n    ignore_older_than: 24h  # release rotated/dated files once a newer one takes over; 0 = never\n    log_processing_rules:\n      - type: multi_line\n        name: new_event\n        pattern: '^\\d{4}-\\d{2}-\\d{2}'\n",
   "journald": "  - type: journald\n    unit: nginx.service\n",
   "Docker": "  - type: docker\n    container_labels: [logs=true]\n",
   "Syslog (UDP)": "  - type: udp\n    port: 5514\n    service: network\n",
@@ -79,6 +79,7 @@ export default function AgentDetail() {
                         <td><span className="badge">{s.type}</span></td>
                         <td className="mono small">{s.target}
                           {s.files && s.files.length > 0 && s.type === "file" && <div className="muted">{s.files.length} file{s.files.length > 1 ? "s" : ""}: {s.files.slice(0, 3).join(", ")}{s.files.length > 3 ? "…" : ""}</div>}
+                          {s.skipped_files && s.skipped_files.length > 0 && <div className="muted" title={s.skipped_files.join("\n")}>{s.skipped_files.length} released (a newer file in the series took over; reopened if written again)</div>}
                           {s.files && s.type === "docker" && <div className="muted">{s.files.join(", ")}</div>}
                           {s.error && <div className="error-text">{s.error}</div>}
                         </td>

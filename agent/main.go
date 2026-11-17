@@ -424,7 +424,14 @@ func cmdStatus(dir string, out io.Writer) error {
 	fmt.Fprintln(w, "\nTYPE\tTARGET\tLINES\tBYTES\tLAST LINE\tERROR")
 	for _, s := range st.Sources {
 		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n", s.Type, s.Target, s.Lines, s.Bytes, orDash(s.LastLine), s.Error)
+		released := map[string]bool{}
+		for _, f := range s.Skipped {
+			released[f] = true
+		}
 		for _, f := range s.Files {
+			if released[f] {
+				f += "  (released: newer file in its series, quiet past ignore_older_than)"
+			}
 			fmt.Fprintf(w, "\t  %s\t\t\t\t\n", f)
 		}
 	}
