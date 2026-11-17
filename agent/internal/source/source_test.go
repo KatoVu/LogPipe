@@ -133,20 +133,6 @@ func TestParseJournal(t *testing.T) {
 	}
 }
 
-func TestSeriesName(t *testing.T) {
-	for in, want := range map[string]string{
-		"/var/log/app.log": "app", "app.log.3": "app", "app.001.log": "app", "app-2026-11-17.log": "app",
-		"app_20261117.log": "app", "app.log.1.gz": "app", "app-2026-11-17-01.log": "app",
-		"server-8080.log": "server-8080", "error.log": "error", "syslog": "syslog", "app-17-11-2026.log": "app",
-		"/var/log/myapp/01.txt": "myapp", "/var/log/myapp/002.txt": "myapp", "/var/log/myapp/20-11-2026.txt": "myapp",
-		"/var/log/myapp/2026-11-17.log": "myapp", "/var/log/myapp/20261117.txt": "myapp",
-	} {
-		if got := SeriesName(in); got != want {
-			t.Errorf("SeriesName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func noMore(t *testing.T, out <-chan Line) {
 	t.Helper()
 	select {
@@ -214,86 +200,90 @@ func TestTailReusedInodeIsANewFile(t *testing.T) {
 	}
 }
 
-func TestSuperseded(t *testing.T) {
+func TestTailFollowsLatestFileOfASeries(t *testing.T) {
+	SwitchGrace = 150 * time.Millisecond
+	defer func() { SwitchGrace = time.Minute }()
 	dir := t.TempDir()
-	now := time.Now()
-	age := map[string]time.Duration{
-		"app-2026-11-15.log": 72 * time.Hour, // older sibling, quiet long enough: released
-		"app-2026-11-16.log": 2 * time.Hour,  // older sibling, but recently written: kept
-		"app-2026-11-17.log": 0,
-		"error.log":          240 * time.Hour, // quiet for days but alone in its series: kept
+	day := func(d string) string { return filepath.Join(dir, d+"-11-2026.txt") }
+	appendFile(t, day("19"), "archive\n")
+	appendFile(t, day("20"), "today\n")
+	appendFile(t, filepath.Join(dir, "a-b-c.txt"), "not in the series\n")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "{DD}-{MM}-{YYYY}.txt"), StartAt: "beginning"}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 10)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, tr, out); close(done) }()
+
+	if got := collect(t, out, 1); got[0] != "today" {
+		t.Fatalf("archive replayed or latest missed: %q", got)
 	}
-	stats := map[string]os.FileInfo{}
-	for name, a := range age {
-		p := filepath.Join(dir, name)
-		appendFile(t, p, "x\n")
-		os.Chtimes(p, now.Add(-a), now.Add(-a))
-		stats[p], _ = os.Stat(p)
+	noMore(t, out)
+	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Files, []string{day("20")}) || !reflect.DeepEqual(s.Skipped, []string{day("19"), filepath.Join(dir, "a-b-c.txt")}) {
+		t.Fatalf("files %q skipped %q", s.Files, s.Skipped)
 	}
-	got := superseded(stats, 24*time.Hour, now)
-	if len(got) != 1 || !got[filepath.Join(dir, "app-2026-11-15.log")] {
-		t.Fatalf("got %v", got)
+	// the next day starts: it is read whole, and the previous day still catches a late flush
+	appendFile(t, day("21"), "tomorrow\n")
+	appendFile(t, day("20"), "late flush\n")
+	got := collect(t, out, 2)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"late flush", "tomorrow"}) {
+		t.Fatalf("switch-over: %q", got)
 	}
-	if got := superseded(stats, 0, now); len(got) != 0 {
-		t.Fatalf("ignore_older_than 0 released %v", got)
+	time.Sleep(300 * time.Millisecond) // past the grace: the old day is closed
+	appendFile(t, day("20"), "after grace\n")
+	noMore(t, out)
+	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Files, []string{day("21")}) {
+		t.Fatalf("after grace files %q", s.Files)
+	}
+	cancel()
+	<-done
+	pos.Save()
+
+	// the next day began while the agent was down: read whole, not from its end; files the last
+	// run left unread (day 20 after its grace, day 21's tail) are finished
+	appendFile(t, day("21"), "end of 21\n")
+	appendFile(t, day("22"), "while down\n")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	src.StartAt = ""
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	got = collect(t, out, 3)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"after grace", "end of 21", "while down"}) {
+		t.Fatalf("restart: %q", got)
 	}
 }
 
-func TestTailReleasesSupersededFilesWithoutLosingLines(t *testing.T) {
+func TestTailLatestLowest(t *testing.T) {
 	dir := t.TempDir()
-	old, cur, lone := filepath.Join(dir, "app-2026-11-15.log"), filepath.Join(dir, "app-2026-11-17.log"), filepath.Join(dir, "error.log")
-	for _, p := range []string{old, cur, lone} {
-		appendFile(t, p, filepath.Base(p)+"\n")
+	for _, n := range []string{"1", "2", "10"} {
+		appendFile(t, filepath.Join(dir, "part-"+n+".log"), n+"\n")
 	}
-	week := time.Now().Add(-7 * 24 * time.Hour)
-	os.Chtimes(old, week, week)
-	os.Chtimes(lone, week, week)
-	pos := LoadPositions(filepath.Join(dir, "positions.json"))
-	src := config.Source{Type: "file", Path: filepath.Join(dir, "*.log"), StartAt: "beginning"}
-	tr := &Tracker{}
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "part-{N}.log"), StartAt: "beginning", Latest: "lowest"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan Line, 10)
-	go TailFiles(ctx, src, pos, tr, out)
-
-	got := collect(t, out, 2)
-	sort.Strings(got)
-	if !reflect.DeepEqual(got, []string{"app-2026-11-17.log", "error.log"}) {
-		t.Fatalf("archive replayed or live file dropped: %q", got)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "p.json")), &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "1" {
+		t.Fatalf("got %q", got)
 	}
 	noMore(t, out)
-	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Skipped, []string{old}) {
-		t.Fatalf("skipped_files = %q", s.Skipped)
-	}
-	// a released file that is written again is picked up from where it was, nothing resent
-	appendFile(t, old, "late\n")
-	if got := collect(t, out, 1); got[0] != "late" {
-		t.Fatalf("late write: %q", got)
-	}
-	// deleted files leave positions.json
-	os.Remove(old)
-	time.Sleep(50 * time.Millisecond)
-	if _, ok := pos.Get(old); ok {
-		t.Fatal("position of a deleted file kept")
-	}
 }
 
-func TestSupersededDateOnlyAndNumberedNames(t *testing.T) {
-	now := time.Now()
-	for _, names := range [][2]string{{"20-11-2026.txt", "21-11-2026.txt"}, {"01.txt", "02.txt"}} {
-		dir := filepath.Join(t.TempDir(), "myapp")
-		os.Mkdir(dir, 0o755)
-		stats := map[string]os.FileInfo{}
-		for i, n := range names {
-			p := filepath.Join(dir, n)
-			appendFile(t, p, "x\n")
-			if i == 0 {
-				os.Chtimes(p, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
-			}
-			stats[p], _ = os.Stat(p)
-		}
-		if got := superseded(stats, 24*time.Hour, now); len(got) != 1 || !got[filepath.Join(dir, names[0])] {
-			t.Errorf("%v: got %v", names, got)
+func TestServiceName(t *testing.T) {
+	for _, c := range [][3]string{
+		{"/l/app-{YYYY}-{MM}-{DD}.log", "/l/app-2026-11-17.log", "app"},
+		{"/l/myapp/{DD}-{MM}-{YYYY}.txt", "/l/myapp/20-11-2026.txt", "myapp"},
+		{"/l/myapp/{N}.txt", "/l/myapp/01.txt", "myapp"},
+		{"/l/app.log.{N}", "/l/app.log.3", "app"},
+		{"/l/{YYYY}/{MM}/{DD}/api.log", "/l/2026/11/17/api.log", "api"},
+		{"/l/*.log", "/l/worker.log", "worker"},
+	} {
+		if got := ServiceName(config.Source{Path: c[0]}, c[1]); got != c[2] {
+			t.Errorf("ServiceName(%q) = %q, want %q", c[0], got, c[2])
 		}
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func write(t *testing.T, path, body string) {
@@ -51,17 +50,40 @@ func TestValidateRejectsBadSources(t *testing.T) {
 		{Type: "tcp"},
 		{Type: "file", Path: "/x", Rules: []Rule{{Type: "multi_line", Pattern: "("}}},
 		{Type: "file", Path: "/x", Rules: []Rule{{Type: "bogus", Pattern: "x"}}},
-		{Type: "file", Path: "/x", IgnoreOlderThan: "7d"},
-		{Type: "file", Path: "/x", IgnoreOlderThan: "-1h"},
+		{Type: "file", Path: "/x/{DAY}.log"},
+		{Type: "file", Path: "/x/{N}-{N}.log"},
+		{Type: "file", Path: "/x/{N}.log", Latest: "newest"},
+		{Type: "file", Path: "/x/*.log", Latest: "lowest"},
 	} {
 		if s.Validate() == nil {
 			t.Errorf("expected %+v to be invalid", s)
 		}
 	}
-	for in, want := range map[string]time.Duration{"": 24 * time.Hour, "0": 0, "168h": 168 * time.Hour} {
-		if got := (Source{IgnoreOlderThan: in}).IgnoreOlder(); got != want {
-			t.Errorf("IgnoreOlder(%q) = %v, want %v", in, got, want)
+}
+
+func TestFormatOrdersSeries(t *testing.T) {
+	f, err := Source{Path: "/l/*/app-{DD}-{MM}-{YYYY}-{N}.txt"}.Format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Glob != "/l/*/app-*-*-*-*.txt" {
+		t.Fatalf("glob %q", f.Glob)
+	}
+	// later date wins over a higher counter; then counters compare as numbers, not text
+	order := []string{"/l/a/app-31-12-2025-99.txt", "/l/a/app-01-01-2026-2.txt", "/l/b/app-01-01-2026-10.txt"}
+	prev := ""
+	for _, p := range order {
+		k, ok := f.Key(p)
+		if !ok || k <= prev {
+			t.Fatalf("%s: key %q ok=%v not after %q", p, k, ok, prev)
 		}
+		prev = k
+	}
+	if _, ok := f.Key("/l/a/app-notes.txt"); ok {
+		t.Fatal("non-matching file keyed")
+	}
+	if f, _ := (Source{Path: "/x/*.log"}).Format(); f != nil {
+		t.Fatal("plain glob has a format")
 	}
 }
 

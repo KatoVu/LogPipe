@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -76,27 +75,54 @@ func (t *tailed) position() Position {
 	return Position{Dev: t.id.Dev, Inode: t.id.Ino, Offset: t.offset, Head: t.head, HeadLen: t.headLen}
 }
 
-// superseded lists files that a newer file of the same series (same directory and SeriesName)
-// has replaced and that have been quiet for longer than quiet. A file with no newer sibling is
-// never superseded, however long it stays quiet.
-func superseded(stats map[string]os.FileInfo, quiet time.Duration, now time.Time) map[string]bool {
-	if quiet <= 0 {
-		return nil
-	}
-	series := func(p string) string { return filepath.Join(filepath.Dir(p), SeriesName(p)) }
-	newest := map[string]time.Time{}
-	for p, fi := range stats {
-		if k := series(p); fi.ModTime().After(newest[k]) {
-			newest[k] = fi.ModTime()
+// SwitchGrace is how long the previous file of a series is still tailed after a later one appears,
+// for an app that is still flushing to it.
+var SwitchGrace = time.Minute
+
+// pickLatest keeps in stats only the files a placeholder source tails: the latest of the series,
+// files within their grace after being replaced, and on the first scan files left unfinished by
+// the last run. It returns the latest file.
+func pickLatest(f *config.Format, lowest bool, stats map[string]os.FileInfo, pos *Positions, first bool, prev string, grace map[string]time.Time) string {
+	now := time.Now()
+	latest, best := "", ""
+	for p := range stats {
+		k, ok := f.Key(p)
+		if !ok {
+			continue
+		}
+		if latest == "" || k != best && (k > best) != lowest || k == best && p > latest {
+			latest, best = p, k
+		}
+		if first {
+			if sp, ok := pos.Get(p); ok && sp.Offset < stats[p].Size() {
+				grace[p] = now.Add(SwitchGrace)
+			}
 		}
 	}
-	out := map[string]bool{}
-	for p, fi := range stats {
-		if fi.ModTime().Before(newest[series(p)]) && now.Sub(fi.ModTime()) > quiet {
-			out[p] = true
+	if prev != "" && prev != latest {
+		grace[prev] = now.Add(SwitchGrace)
+	}
+	for p, until := range grace {
+		if now.After(until) {
+			delete(grace, p)
 		}
 	}
-	return out
+	for p := range stats {
+		if _, ok := grace[p]; p != latest && !ok {
+			delete(stats, p)
+		}
+	}
+	return latest
+}
+
+// known reports whether any file of a series has a saved position, i.e. the agent followed it before.
+func known(pos *Positions, matches []string) bool {
+	for _, m := range matches {
+		if _, ok := pos.Get(m); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // resume finds where to continue an opened file: its saved offset under this name, or under any
@@ -116,9 +142,8 @@ func resume(pos *Positions, path string, t *tailed, size int64) (int64, bool) {
 // (copytruncate). Files present at the first scan start at their saved offset, or at the end
 // unless start_position is "beginning"; files that appear later are read from the start.
 //
-// Superseded files (see superseded) are drained, closed and marked read to their end, then only
-// stat'ed: a write to one makes it recent again and it is reopened at its saved offset, so
-// releasing a file never loses a line.
+// A path with placeholders (config.Format) tails only the latest file of its series. When a later
+// file appears, the previous one stays tailed for SwitchGrace to catch late writes, then is closed.
 func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Tracker, out chan<- Line) error {
 	open := map[string]*tailed{}
 	defer func() {
@@ -126,21 +151,41 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			t.f.Close()
 		}
 	}()
+	f, _ := src.Format() // validated on load
+	glob := src.Path
+	if f != nil {
+		glob = f.Glob
+	}
+	latest, grace := "", map[string]time.Time{}
 	first := true
 	tick := time.NewTicker(PollEvery)
 	defer tick.Stop()
 	for {
-		matches, err := filepath.Glob(src.Path)
+		matches, err := filepath.Glob(glob)
 		tr.SetError(err)
 		sort.Strings(matches)
-		tr.SetFiles(matches)
 		stats := map[string]os.FileInfo{}
-		where := map[fileID]string{}
 		for _, path := range matches {
 			if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 				stats[path] = fi
-				where[idOf(fi)] = path
 			}
+		}
+		if f != nil {
+			latest = pickLatest(f, src.Latest == "lowest", stats, pos, first, latest, grace)
+		}
+		tracked, skipped := []string{}, []string{}
+		for _, path := range matches {
+			if stats[path] != nil {
+				tracked = append(tracked, path)
+			} else if f != nil {
+				skipped = append(skipped, path)
+			}
+		}
+		tr.SetFiles(tracked)
+		tr.SetSkipped(skipped)
+		where := map[fileID]string{}
+		for path, fi := range stats {
+			where[idOf(fi)] = path
 		}
 		// Re-key open files by where they are now, keeping reader and offset across a rename.
 		moved := map[string]*tailed{}
@@ -164,41 +209,12 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			t.f.Close()
 		}
 		open = moved
-		skip := superseded(stats, src.IgnoreOlder(), time.Now())
-		var skipped []string
-		for _, path := range matches {
-			if skip[path] {
-				skipped = append(skipped, path)
-			}
-		}
-		tr.SetSkipped(skipped)
-
 		for _, path := range matches {
 			fi := stats[path]
 			if fi == nil {
 				continue
 			}
 			t := open[path]
-			if id := idOf(fi); skip[path] && (t == nil || t.id == id) {
-				if t != nil {
-					if !drain(ctx, path, t, tr, out) {
-						return nil
-					}
-					pos.Set(path, t.position())
-					t.f.Close()
-					delete(open, path)
-				} else if p, ok := pos.Get(path); !ok || p.Inode != id.Ino || p.Dev != id.Dev {
-					// Never read: count it as read to its end, so a later write sends only new lines.
-					if t, err = openFile(path, fi); err == nil {
-						if t.offset, ok = resume(pos, path, t, fi.Size()); !ok {
-							t.offset = fi.Size()
-						}
-						pos.Set(path, t.position())
-						t.f.Close()
-					}
-				}
-				continue
-			}
 			if t != nil && t.id != idOf(fi) {
 				// Rotated: drain the old file, then follow the new one from its start.
 				if !drain(ctx, path, t, tr, out) {
@@ -219,7 +235,9 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 					continue
 				}
 				off, ok := resume(pos, path, t, fi.Size())
-				if !ok && first && src.StartAt != "beginning" {
+				// A series the agent already followed: its new latest file is read whole, even
+				// on the first scan after a restart.
+				if !ok && first && src.StartAt != "beginning" && !(f != nil && known(pos, matches)) {
 					off = fi.Size()
 				}
 				if err := t.seek(off); err != nil {
@@ -245,7 +263,7 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				delete(open, path)
 			}
 		}
-		pos.Prune(src.Path, matches) // after the loop: a renamed file was looked up by its old name
+		pos.Prune(glob, matches) // after the loop: a renamed file was looked up by its old name
 		first = false
 		select {
 		case <-ctx.Done():
@@ -298,29 +316,19 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 	}
 }
 
-var (
-	seriesExt  = regexp.MustCompile(`(?i)\.(log|gz|txt|out)$`)
-	seriesDate = regexp.MustCompile(`[-_.]?(\d{4}[-_.]?\d{2}[-_.]?\d{2}|\d{2}[-_.]\d{2}[-_.]\d{4})$`) // 2026-11-17, 20261117, 17-11-2026
-	// shortcut: only 1-3 digit counters count as rotation, so server-8080.log stays its own series; widen if logs rotate past .999.
-	seriesNum = regexp.MustCompile(`[-_.]\d{1,3}$`)
-)
-
-// SeriesName is a file's name with rotation dates, counters and log extensions stripped, so
-// app.log, app.log.3, app.001.log, app-2026-11-17.log and app.log.1.gz are all "app". A name
-// that is nothing but a date or a number (01.txt, 17-11-2026.txt) takes its directory's name.
-func SeriesName(path string) string {
-	name := filepath.Base(path)
-	for {
-		next := seriesExt.ReplaceAllString(name, "")
-		next = seriesDate.ReplaceAllString(next, "")
-		next = seriesNum.ReplaceAllString(next, "")
-		if next == name {
-			break
+// ServiceName names a file source that has no service: from the fixed start of its file name
+// format (app-{YYYY}-{MM}-{DD}.log -> app), else the folder (myapp/{N}.txt -> myapp), else the
+// file name (app.log -> app).
+func ServiceName(src config.Source, path string) string {
+	if config.HasFormat(src.Path) {
+		path = src.Path
+	}
+	for p := path; p != "." && p != "/"; p = filepath.Dir(p) {
+		name := strings.Trim(config.StaticName(p), "-_. ")
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+		if name != "" && !config.HasFormat(name) {
+			return name
 		}
-		name = next
 	}
-	if strings.Trim(name, "0123456789-_.") == "" {
-		return filepath.Base(filepath.Dir(path))
-	}
-	return name
+	return filepath.Base(path)
 }

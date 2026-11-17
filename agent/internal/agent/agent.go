@@ -235,7 +235,7 @@ func event(cfg *config.Config, src config.Source, l source.Line, msg string) shi
 		service = l.Service
 	}
 	if service == "" && src.Type == "file" {
-		service = source.SeriesName(l.Key)
+		service = source.ServiceName(src, l.Key)
 	}
 	if service == "" {
 		service = src.Type
