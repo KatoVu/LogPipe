@@ -137,7 +137,9 @@ func TestSeriesName(t *testing.T) {
 	for in, want := range map[string]string{
 		"/var/log/app.log": "app", "app.log.3": "app", "app.001.log": "app", "app-2026-11-17.log": "app",
 		"app_20261117.log": "app", "app.log.1.gz": "app", "app-2026-11-17-01.log": "app",
-		"server-8080.log": "server-8080", "error.log": "error", "2026-11-17.log": "2026-11-17", "syslog": "syslog",
+		"server-8080.log": "server-8080", "error.log": "error", "syslog": "syslog", "app-17-11-2026.log": "app",
+		"/var/log/myapp/01.txt": "myapp", "/var/log/myapp/002.txt": "myapp", "/var/log/myapp/20-11-2026.txt": "myapp",
+		"/var/log/myapp/2026-11-17.log": "myapp", "/var/log/myapp/20261117.txt": "myapp",
 	} {
 		if got := SeriesName(in); got != want {
 			t.Errorf("SeriesName(%q) = %q, want %q", in, got, want)
@@ -273,5 +275,25 @@ func TestTailReleasesSupersededFilesWithoutLosingLines(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if _, ok := pos.Get(old); ok {
 		t.Fatal("position of a deleted file kept")
+	}
+}
+
+func TestSupersededDateOnlyAndNumberedNames(t *testing.T) {
+	now := time.Now()
+	for _, names := range [][2]string{{"20-11-2026.txt", "21-11-2026.txt"}, {"01.txt", "02.txt"}} {
+		dir := filepath.Join(t.TempDir(), "myapp")
+		os.Mkdir(dir, 0o755)
+		stats := map[string]os.FileInfo{}
+		for i, n := range names {
+			p := filepath.Join(dir, n)
+			appendFile(t, p, "x\n")
+			if i == 0 {
+				os.Chtimes(p, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+			}
+			stats[p], _ = os.Stat(p)
+		}
+		if got := superseded(stats, 24*time.Hour, now); len(got) != 1 || !got[filepath.Join(dir, names[0])] {
+			t.Errorf("%v: got %v", names, got)
+		}
 	}
 }

@@ -158,8 +158,10 @@ logs:
   renamed inside the glob (`app.log` -> `app.log.1`, even while the agent is stopped) keeps its
   offset instead of being read again, and a new file that reuses a deleted file's inode is read
   from its start.
-- **Log series**: `app.log`, `app.log.3`, `app.001.log`, `app-2026-11-17.log` and `app.log.1.gz`
-  are one series, `app`, which is also the service when `service:` is unset. Once a newer file of
+- **Log series**: `app.log`, `app.log.3`, `app.001.log`, `app-2026-11-17.log`, `app-17-11-2026.log`
+  and `app.log.1.gz` are one series, `app`, which is also the service when `service:` is unset.
+  Files named only by a date or number (`myapp/01.txt`, `myapp/20-11-2026.txt`) take the folder's
+  name, `myapp`. Once a newer file of
   the series exists and an older one has been quiet for `ignore_older_than` (default 24h), the old
   one is drained and closed and listed under `skipped_files` in `status`. It is still checked: a
   write to it reopens it at its offset. A quiet file with no newer sibling (`error.log`) is never

@@ -300,23 +300,27 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 
 var (
 	seriesExt  = regexp.MustCompile(`(?i)\.(log|gz|txt|out)$`)
-	seriesDate = regexp.MustCompile(`[-_.]?\d{4}[-_.]?\d{2}[-_.]?\d{2}$`)
+	seriesDate = regexp.MustCompile(`[-_.]?(\d{4}[-_.]?\d{2}[-_.]?\d{2}|\d{2}[-_.]\d{2}[-_.]\d{4})$`) // 2026-11-17, 20261117, 17-11-2026
 	// shortcut: only 1-3 digit counters count as rotation, so server-8080.log stays its own series; widen if logs rotate past .999.
 	seriesNum = regexp.MustCompile(`[-_.]\d{1,3}$`)
 )
 
 // SeriesName is a file's name with rotation dates, counters and log extensions stripped, so
-// app.log, app.log.3, app.001.log, app-2026-11-17.log and app.log.1.gz are all "app".
+// app.log, app.log.3, app.001.log, app-2026-11-17.log and app.log.1.gz are all "app". A name
+// that is nothing but a date or a number (01.txt, 17-11-2026.txt) takes its directory's name.
 func SeriesName(path string) string {
 	name := filepath.Base(path)
 	for {
 		next := seriesExt.ReplaceAllString(name, "")
 		next = seriesDate.ReplaceAllString(next, "")
 		next = seriesNum.ReplaceAllString(next, "")
-		if next == name || next == "" {
+		if next == name {
 			break
 		}
 		name = next
 	}
-	return seriesExt.ReplaceAllString(name, "") // a name that is only a date keeps it
+	if strings.Trim(name, "0123456789-_.") == "" {
+		return filepath.Base(filepath.Dir(path))
+	}
+	return name
 }
