@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -149,4 +150,27 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 			return false
 		}
 	}
+}
+
+var (
+	seriesExt  = regexp.MustCompile(`(?i)\.(log|gz|txt|out)$`)
+	seriesDate = regexp.MustCompile(`[-_.]?\d{4}[-_.]?\d{2}[-_.]?\d{2}$`)
+	// shortcut: only 1-3 digit counters count as rotation, so server-8080.log stays its own series; widen if logs rotate past .999.
+	seriesNum = regexp.MustCompile(`[-_.]\d{1,3}$`)
+)
+
+// SeriesName is a file's name with rotation dates, counters and log extensions stripped, so
+// app.log, app.log.3, app.001.log, app-2026-11-17.log and app.log.1.gz are all "app".
+func SeriesName(path string) string {
+	name := filepath.Base(path)
+	for {
+		next := seriesExt.ReplaceAllString(name, "")
+		next = seriesDate.ReplaceAllString(next, "")
+		next = seriesNum.ReplaceAllString(next, "")
+		if next == name || next == "" {
+			break
+		}
+		name = next
+	}
+	return seriesExt.ReplaceAllString(name, "") // a name that is only a date keeps it
 }

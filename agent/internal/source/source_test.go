@@ -131,3 +131,15 @@ func TestParseJournal(t *testing.T) {
 		t.Fatal("binary message should be skipped")
 	}
 }
+
+func TestSeriesName(t *testing.T) {
+	for in, want := range map[string]string{
+		"/var/log/app.log": "app", "app.log.3": "app", "app.001.log": "app", "app-2026-11-17.log": "app",
+		"app_20261117.log": "app", "app.log.1.gz": "app", "app-2026-11-17-01.log": "app",
+		"server-8080.log": "server-8080", "error.log": "error", "2026-11-17.log": "2026-11-17", "syslog": "syslog",
+	} {
+		if got := SeriesName(in); got != want {
+			t.Errorf("SeriesName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
