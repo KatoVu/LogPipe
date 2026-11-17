@@ -34,16 +34,19 @@ type Stats struct {
 	Bytes    int64    `json:"bytes"`
 	LastLine string   `json:"last_line_at,omitempty"`
 	Files    []string `json:"files,omitempty"`
-	Error    string   `json:"error,omitempty"`
+	// Skipped are matched files a name-format source does not tail (not the latest of its series).
+	Skipped []string `json:"skipped_files,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 type Tracker struct {
-	mu    sync.Mutex
-	lines atomic.Int64
-	bytes atomic.Int64
-	last  atomic.Int64
-	files []string
-	err   string
+	mu      sync.Mutex
+	lines   atomic.Int64
+	bytes   atomic.Int64
+	last    atomic.Int64
+	files   []string
+	skipped []string
+	err     string
 }
 
 func (t *Tracker) Count(text string) {
@@ -67,11 +70,17 @@ func (t *Tracker) SetFiles(files []string) {
 	t.mu.Unlock()
 }
 
+func (t *Tracker) SetSkipped(files []string) {
+	t.mu.Lock()
+	t.skipped = files
+	t.mu.Unlock()
+}
+
 func (t *Tracker) Snapshot(src config.Source) Stats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	s := Stats{ID: src.ID(), Type: src.Type, Target: Target(src), Service: src.Service,
-		Lines: t.lines.Load(), Bytes: t.bytes.Load(), Files: t.files, Error: t.err}
+		Lines: t.lines.Load(), Bytes: t.bytes.Load(), Files: t.files, Skipped: t.skipped, Error: t.err}
 	if ms := t.last.Load(); ms > 0 {
 		s.LastLine = time.UnixMilli(ms).UTC().Format(time.RFC3339)
 	}
@@ -119,9 +128,12 @@ type Positions struct {
 }
 
 type Position struct {
-	Inode  uint64 `json:"inode,omitempty"`
-	Offset int64  `json:"offset,omitempty"`
-	Cursor string `json:"cursor,omitempty"`
+	Dev     uint64 `json:"dev,omitempty"`
+	Inode   uint64 `json:"inode,omitempty"`
+	Offset  int64  `json:"offset,omitempty"`
+	Head    uint64 `json:"head,omitempty"`
+	HeadLen int    `json:"head_len,omitempty"`
+	Cursor  string `json:"cursor,omitempty"`
 }
 
 func LoadPositions(path string) *Positions {
@@ -143,6 +155,36 @@ func (p *Positions) Set(key string, v Position) {
 	p.mu.Lock()
 	p.m[key] = v
 	p.mu.Unlock()
+}
+
+// Find returns the saved position of an open file under any name, for a file renamed while the
+// agent was stopped.
+func (p *Positions) Find(t *tailed) (Position, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, v := range p.m {
+		if v.Inode == t.id.Ino && t.same(v) {
+			return v, true
+		}
+	}
+	return Position{}, false
+}
+
+// Prune forgets files that match glob but no longer exist, so dated logs that were deleted do
+// not pile up in positions.json. Journald and docker entries hold a Cursor and are never pruned,
+// even when a glob like "*" matches their keys.
+func (p *Positions) Prune(glob string, matches []string) {
+	exists := make(map[string]bool, len(matches))
+	for _, m := range matches {
+		exists[m] = true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for k := range p.m {
+		if ok, _ := filepath.Match(glob, k); ok && !exists[k] && p.m[k].Cursor == "" {
+			delete(p.m, k)
+		}
+	}
 }
 
 func (p *Positions) Save() error {

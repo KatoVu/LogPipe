@@ -6,6 +6,7 @@ import { Card, Empty, Loading, PageHead, TimeAgo, bytes, fmt } from "../ui";
 
 const SNIPPETS: Record<string, string> = {
   "File": "  - type: file\n    path: /var/log/myapp/*.log\n    service: myapp\n    source: java\n    log_processing_rules:\n      - type: multi_line\n        name: new_event\n        pattern: '^\\d{4}-\\d{2}-\\d{2}'\n",
+  "Dated / numbered files": "  - type: file\n    path: /var/log/myapp/{DD}-{MM}-{YYYY}.txt  # or {YYYY} {MM} {DD} {HH} {N}; only the latest file is tailed\n    service: myapp\n    # latest: lowest  # if the lowest {N} is the newest\n",
   "journald": "  - type: journald\n    unit: nginx.service\n",
   "Docker": "  - type: docker\n    container_labels: [logs=true]\n",
   "Syslog (UDP)": "  - type: udp\n    port: 5514\n    service: network\n",
@@ -79,6 +80,12 @@ export default function AgentDetail() {
                         <td><span className="badge">{s.type}</span></td>
                         <td className="mono small">{s.target}
                           {s.files && s.files.length > 0 && s.type === "file" && <div className="muted">{s.files.length} file{s.files.length > 1 ? "s" : ""}: {s.files.slice(0, 3).join(", ")}{s.files.length > 3 ? "…" : ""}</div>}
+                          {s.skipped_files && s.skipped_files.length > 0 && (
+                            <details className="muted">
+                              <summary>{s.skipped_files.length} older file{s.skipped_files.length > 1 ? "s" : ""} of the series not tailed</summary>
+                              {s.skipped_files.map((f) => <div key={f}>{f}</div>)}
+                            </details>
+                          )}
                           {s.files && s.type === "docker" && <div className="muted">{s.files.join(", ")}</div>}
                           {s.error && <div className="error-text">{s.error}</div>}
                         </td>

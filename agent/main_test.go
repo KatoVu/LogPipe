@@ -101,3 +101,21 @@ func TestServiceNeedsInit(t *testing.T) {
 		t.Fatalf("want init error, got %v", err)
 	}
 }
+
+func TestTrackWritesDetectedFormat(t *testing.T) {
+	dir, logs := t.TempDir(), t.TempDir()
+	for _, f := range []string{"20-11-2026.txt", "21-11-2026.txt"} {
+		os.WriteFile(filepath.Join(logs, f), nil, 0o644)
+	}
+	run(t, dir, "init", "--endpoint", "http://srv:8080", "--api-key", "k")
+	if out := run(t, dir, "track", filepath.Join(logs, "*.txt"), "--service", "myapp"); !strings.Contains(out, "only the latest is tailed") {
+		t.Fatalf("no detection note:\n%s", out)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(logs, "{DD}-{MM}-{YYYY}.txt"); cfg.Sources[0].Path != want {
+		t.Fatalf("path %q, want %q", cfg.Sources[0].Path, want)
+	}
+}

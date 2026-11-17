@@ -1,7 +1,8 @@
 # Install the agent
 
 `logpipe-agent` is a small Go collector (one static binary) that tails logs on a host and ships
-them to `logpipe server` as OpenTelemetry OTLP/HTTP. It reads files (with rotation),
+them to `logpipe server` as OpenTelemetry OTLP/HTTP. It reads files (with rotation, and dated or
+numbered log series),
 journald, Docker containers and syslog (TCP/UDP), joins multiline events such as stack
 traces, and can drop or mask lines before they leave the host.
 
@@ -139,7 +140,8 @@ docker rm -f logpipe-agent
 | `config edit [FILE]` | edit `agent.yaml` or `conf.d/FILE.yaml` in `$EDITOR`, saved only if valid |
 | `version` | the agent's version |
 
-`TARGET` is a file glob, `journald` or `journald:UNIT`, `docker`, `tcp:PORT` or `udp:PORT`.
+`TARGET` is a file glob or [name format](#dated-and-numbered-log-files), `journald` or
+`journald:UNIT`, `docker`, `tcp:PORT` or `udp:PORT`.
 Useful `track` flags: `--service`, `--source`, `--tag k:v`, `--auto-multiline`,
 `--multiline REGEX`, `--exclude REGEX`, `--include REGEX`, `--mask 'REGEX=>REPLACEMENT'`,
 `--label key=value` (docker), `--start beginning|end`.
@@ -226,6 +228,48 @@ logs:
         pattern: 'password=\S+'
         replace_placeholder: 'password=[REDACTED]'
 ```
+
+## Dated and numbered log files
+
+Many apps write a new file per day or per part: `20-11-2026.txt`, `21-11-2026.txt`, or `01.txt`,
+`02.txt`. Put placeholders where the name changes and the agent tails **only the latest file**:
+
+```yaml title="conf.d/myapp.yaml"
+logs:
+  - type: file
+    path: /var/log/myapp/{DD}-{MM}-{YYYY}.txt   # newest date is tailed
+    service: myapp
+  - type: file
+    path: /var/log/worker/{N}.txt               # highest number is tailed
+    latest: lowest                              # ...or the lowest, if that is the newest
+```
+
+| Placeholder | Matches | Placeholder | Matches |
+|---|---|---|---|
+| `{YYYY}` | 4-digit year | `{HH}` | 2-digit hour |
+| `{MM}` | 2-digit month | `{N}` | any number, compared as a number (`2` < `10`) |
+| `{DD}` | 2-digit day | `*` `?` | still work in the rest of the path |
+
+Files are ordered by date first, then by `{N}`. How it behaves:
+
+- When a later file appears, the previous one is still read for **one minute** to catch late
+  writes, then closed.
+- Older files are never replayed, even with `start_position: beginning`. They are listed in
+  `logpipe-agent status` as *not tailed* and counted on the agent page.
+- A file that started while the agent was stopped is read from its start, and anything the last
+  run left unread is finished on start.
+- Without `service:`, the service is the fixed start of the name (`app-{YYYY}-{MM}-{DD}.log` →
+  `app`), else the folder (`myapp/{N}.txt` → `myapp`).
+
+**Let `track` write it for you**: `logpipe-agent track '/var/log/myapp/*.txt'` looks at the files
+that match. If they share one name format, it saves the path with placeholders and tells you. Check
+it with `logpipe-agent list` and fix it with `logpipe-agent config edit myapp` if it guessed
+wrong. Dates like `11-20-2026` (month first) are read as day first, so change those to
+`{MM}-{DD}-{YYYY}`. Sources pushed from the UI are not detected; write the placeholders yourself
+(the **Dated / numbered files** snippet is a starting point).
+
+Files are followed by identity (device, inode and their first 1 KB), not by name, so a file
+renamed inside the glob, such as `app.log` → `app.log.1`, is never read twice.
 
 The full reference (every rule type, Docker labels, syslog listeners, how rotation and the
 buffer behave) is in

@@ -172,6 +172,10 @@ func cmdTrack(dir string, args []string, out io.Writer) error {
 		return errors.New("usage: track TARGET [flags]  (TARGET: file glob, journald[:unit], docker, tcp:PORT, udp:PORT)")
 	}
 	s := sourceFromTarget(target)
+	detected := false
+	if s.Type == "file" && strings.ContainsAny(s.Path, "*?[") {
+		s.Path, detected = detectedPath(s.Path)
+	}
 	s.Service, s.Src, s.Tags, s.Labels, s.StartAt = *service, *src, tags, labels, *start
 	if *multiline != "" {
 		s.Rules = append(s.Rules, config.Rule{Type: "multi_line", Name: "new_event", Pattern: *multiline})
@@ -224,7 +228,18 @@ func cmdTrack(dir string, args []string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "tracking %s (%s) in %s; a running agent picks it up within seconds\n", source.Target(s), s.Type, path)
+	if detected {
+		fmt.Fprintf(out, "the files look like one series, so only the latest is tailed; if the format is wrong, edit path in %s\n", path)
+	}
 	return nil
+}
+
+// detectedPath swaps a glob for the file name format its files share, if they share one.
+func detectedPath(glob string) (string, bool) {
+	if f, ok := source.DetectFormat(glob); ok {
+		return f, true
+	}
+	return glob, false
 }
 
 // splitTarget accepts the target before the flags (`track /var/log/x.log --service x`).
@@ -427,6 +442,9 @@ func cmdStatus(dir string, out io.Writer) error {
 		for _, f := range s.Files {
 			fmt.Fprintf(w, "\t  %s\t\t\t\t\n", f)
 		}
+		for _, f := range s.Skipped {
+			fmt.Fprintf(w, "\t  %s (not tailed: not the latest of the series)\t\t\t\t\n", f)
+		}
 	}
 	return w.Flush()
 }
@@ -447,7 +465,11 @@ func cmdCheck(dir string, out io.Writer) error {
 	for _, s := range cfg.Sources {
 		switch s.Type {
 		case "file":
-			m, _ := filepath.Glob(s.Path)
+			glob := s.Path
+			if f, _ := s.Format(); f != nil {
+				glob = f.Glob
+			}
+			m, _ := filepath.Glob(glob)
 			fmt.Fprintf(out, "  %s: %d files match\n", s.Path, len(m))
 			for _, f := range m {
 				if fh, err := os.Open(f); err != nil {

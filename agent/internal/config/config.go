@@ -51,7 +51,10 @@ type Source struct {
 	Src     string   `yaml:"source,omitempty" json:"source,omitempty"`
 	Tags    []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// StartAt is "end" (default, like tail -f) or "beginning" for files seen for the first time.
-	StartAt       string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
+	StartAt string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
+	// Latest is "highest" (default) or "lowest": which end of a placeholder path's order is the
+	// file to tail (see Format).
+	Latest        string `yaml:"latest,omitempty" json:"latest,omitempty"`
 	AutoMultiLine *bool  `yaml:"auto_multi_line_detection,omitempty" json:"auto_multi_line_detection,omitempty"`
 	Rules         []Rule `yaml:"log_processing_rules,omitempty" json:"log_processing_rules,omitempty"`
 	// File is the conf.d file this source came from (filled on load).
@@ -215,6 +218,15 @@ func (s Source) Validate() error {
 	}
 	if s.StartAt != "" && s.StartAt != "end" && s.StartAt != "beginning" {
 		return fmt.Errorf("start_position must be end or beginning")
+	}
+	if _, err := s.Format(); err != nil {
+		return err
+	}
+	if s.Latest != "" && s.Latest != "highest" && s.Latest != "lowest" {
+		return fmt.Errorf("latest must be highest or lowest")
+	}
+	if s.Latest != "" && !HasFormat(s.Path) {
+		return fmt.Errorf("latest needs a placeholder in path, e.g. /var/log/app/{N}.log")
 	}
 	for _, r := range s.Rules {
 		if !RuleTypes[r.Type] {

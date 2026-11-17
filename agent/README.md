@@ -119,7 +119,8 @@ auto_multi_line_detection: false  # default for sources without a multi_line rul
 ```yaml
 logs:
   - type: file                  # file | journald | docker | tcp | udp
-    path: /var/log/myapp/*.log  # file: glob
+    path: /var/log/myapp/*.log  # file: glob, or a name format: /var/log/myapp/{DD}-{MM}-{YYYY}.txt
+    latest: highest             # with a name format: highest (default) or lowest value is the newest file
     service: myapp
     source: java
     tags: [team:payments]
@@ -153,6 +154,22 @@ logs:
 - **Files**: globs are re-checked every 250 ms; rotation (rename + new file) and copytruncate are
   both followed. Offsets are saved to `run/positions.json`, so a restart neither resends nor
   skips lines (a half-written last line is re-read, never split).
+- **File identity**: a file is its device + inode + a hash of its first 1 KB, not its name. A file
+  renamed inside the glob (`app.log` -> `app.log.1`, even while the agent is stopped) keeps its
+  offset instead of being read again, and a new file that reuses a deleted file's inode is read
+  from its start.
+- **Dated and numbered files**: put placeholders where the name changes: `{YYYY}` `{MM}` `{DD}`
+  `{HH}` `{N}`, e.g. `/var/log/myapp/{DD}-{MM}-{YYYY}.txt`, `/var/log/myapp/{N}.txt` or
+  `/var/log/app-{YYYY}{MM}{DD}-{N}.log` (`*` still works in the rest of the path). Only the latest
+  file is tailed: the newest date, then the highest `{N}` (`latest: lowest` for the lowest). When a
+  later file appears, the previous one is still tailed for a minute to catch late writes, then
+  closed. A file that began while the agent was down is read whole, and files the last run left
+  unread are finished on start. Older files are listed as `skipped_files` in `status`. Without
+  `service:`, the service is the fixed start of the name (`app-{YYYY}...` -> `app`), else the
+  folder (`myapp/{N}.txt` -> `myapp`).
+  `logpipe-agent track '/var/log/myapp/*.txt'` looks at the files that match and, if they share one
+  name format, writes it into the config for you; edit `path` if it guessed wrong (for example a
+  US month-first date, which it reads as day-first).
 - **Shipping**: batches of up to 500 events or 1 s as **OpenTelemetry OTLP/HTTP** (JSON, gzip) to
   `POST /v1/logs` with `X-API-Key`: resource `host.name`, `service.name`, `os.type`,
   `host.arch`; per record the body, `observedTimeUnixNano`, `log.file.path`/`log.file.name`.

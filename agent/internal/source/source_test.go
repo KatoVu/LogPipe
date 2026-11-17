@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -129,5 +130,257 @@ func TestParseJournal(t *testing.T) {
 	}
 	if _, _, ok := parseJournal([]byte(`{"MESSAGE":[1,2]}`)); ok {
 		t.Fatal("binary message should be skipped")
+	}
+}
+
+func noMore(t *testing.T, out <-chan Line) {
+	t.Helper()
+	select {
+	case l := <-out:
+		t.Fatalf("unexpected extra line %q from %s", l.Text, l.Key)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestTailRenameInsideGlobIsNotReadTwice(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: path + "*"}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 100)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, &Tracker{}, out); close(done) }()
+
+	time.Sleep(50 * time.Millisecond)
+	appendFile(t, path, "one\n")
+	collect(t, out, 1)
+	os.Rename(path, path+".1")
+	appendFile(t, path+".1", "late write to old file\n")
+	appendFile(t, path, "two\n")
+	got := collect(t, out, 2)
+	if len(got) != 2 || !(got[0] == "late write to old file" && got[1] == "two" || got[1] == "late write to old file" && got[0] == "two") {
+		t.Fatalf("got %q", got)
+	}
+	noMore(t, out)
+	cancel()
+	<-done
+	pos.Save()
+
+	// renamed again while the agent is down: resumes under the new name, nothing resent
+	os.Rename(path+".1", path+".2")
+	appendFile(t, path+".2", "while down\n")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "while down" {
+		t.Fatalf("resume after rename: %q", got)
+	}
+	noMore(t, out)
+}
+
+func TestTailReusedInodeIsANewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "fresh\n")
+	fi, _ := os.Stat(path)
+	id := idOf(fi)
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	// what an older, deleted file with the same inode left behind
+	pos.Set(path, Position{Dev: id.Dev, Inode: id.Ino, Offset: 6, Head: 1, HeadLen: 6})
+	src := config.Source{Type: "file", Path: path, StartAt: "beginning"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, pos, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "fresh" {
+		t.Fatalf("reused inode skipped the new file: %q", got)
+	}
+}
+
+func TestTailFollowsLatestFileOfASeries(t *testing.T) {
+	SwitchGrace = 150 * time.Millisecond
+	defer func() { SwitchGrace = time.Minute }()
+	dir := t.TempDir()
+	day := func(d string) string { return filepath.Join(dir, d+"-11-2026.txt") }
+	appendFile(t, day("19"), "archive\n")
+	appendFile(t, day("20"), "today\n")
+	appendFile(t, filepath.Join(dir, "a-b-c.txt"), "not in the series\n")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "{DD}-{MM}-{YYYY}.txt"), StartAt: "beginning"}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 10)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, tr, out); close(done) }()
+
+	if got := collect(t, out, 1); got[0] != "today" {
+		t.Fatalf("archive replayed or latest missed: %q", got)
+	}
+	noMore(t, out)
+	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Files, []string{day("20")}) || !reflect.DeepEqual(s.Skipped, []string{day("19"), filepath.Join(dir, "a-b-c.txt")}) {
+		t.Fatalf("files %q skipped %q", s.Files, s.Skipped)
+	}
+	// the next day starts: it is read whole, and the previous day still catches a late flush
+	appendFile(t, day("21"), "tomorrow\n")
+	appendFile(t, day("20"), "late flush\n")
+	got := collect(t, out, 2)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"late flush", "tomorrow"}) {
+		t.Fatalf("switch-over: %q", got)
+	}
+	time.Sleep(300 * time.Millisecond) // past the grace: the old day is closed
+	appendFile(t, day("20"), "after grace\n")
+	noMore(t, out)
+	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Files, []string{day("21")}) {
+		t.Fatalf("after grace files %q", s.Files)
+	}
+	cancel()
+	<-done
+	pos.Save()
+
+	// the next day began while the agent was down: read whole, not from its end; files the last
+	// run left unread (day 20 after its grace, day 21's tail) are finished
+	appendFile(t, day("21"), "end of 21\n")
+	appendFile(t, day("22"), "while down\n")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	src.StartAt = ""
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	got = collect(t, out, 3)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"after grace", "end of 21", "while down"}) {
+		t.Fatalf("restart: %q", got)
+	}
+}
+
+func TestTailLatestLowest(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"1", "2", "10"} {
+		appendFile(t, filepath.Join(dir, "part-"+n+".log"), n+"\n")
+	}
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "part-{N}.log"), StartAt: "beginning", Latest: "lowest"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "p.json")), &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "1" {
+		t.Fatalf("got %q", got)
+	}
+	noMore(t, out)
+}
+
+func TestServiceName(t *testing.T) {
+	cwd, _ := os.Getwd()
+	for _, c := range [][3]string{
+		{"/l/app-{YYYY}-{MM}-{DD}.log", "/l/app-2026-11-17.log", "app"},
+		{"/l/myapp/{DD}-{MM}-{YYYY}.txt", "/l/myapp/20-11-2026.txt", "myapp"},
+		{"/l/myapp/{N}.txt", "/l/myapp/01.txt", "myapp"},
+		{"/l/app.log.{N}", "/l/app.log.3", "app"},
+		{"/l/{YYYY}/{MM}/{DD}/api.log", "/l/2026/11/17/api.log", "api"},
+		{"/l/*.log", "/l/worker.log", "worker"},
+		{"{N}.txt", "01.txt", filepath.Base(cwd)}, // relative: the working directory's name
+	} {
+		if got := ServiceName(config.Source{Path: c[0]}, c[1]); got != c[2] {
+			t.Errorf("ServiceName(%q) = %q, want %q", c[0], got, c[2])
+		}
+	}
+}
+
+func TestDetectFormat(t *testing.T) {
+	for _, c := range []struct {
+		files []string
+		want  string
+	}{
+		{[]string{"01.txt", "02.txt", "10.txt"}, "{N}.txt"},
+		{[]string{"20-11-2026.txt", "21-11-2026.txt"}, "{DD}-{MM}-{YYYY}.txt"},
+		{[]string{"app-2026-11-17.log", "app-2026-11-18.log"}, "app-{YYYY}-{MM}-{DD}.log"},
+		{[]string{"app_20261117.log"}, "app_{YYYY}{MM}{DD}.log"}, // a date is clear from one file
+		{[]string{"app-2026-11-17-1.log", "app-2026-11-17-2.log", "app-2026-11-18-1.log"}, "app-{YYYY}-{MM}-{DD}-{N}.log"},
+		{[]string{"v2-app.1.log", "v2-app.2.log"}, "v2-app.{N}.log"}, // digits that never change stay
+		{[]string{"app.log"}, ""},
+		{[]string{"01.txt"}, ""},               // one counter tells nothing
+		{[]string{"a1-1.txt", "a2-2.txt"}, ""}, // two runs vary: not one series
+		{[]string{"01.txt", "notes.txt"}, ""},  // another file shares the glob
+	} {
+		dir := t.TempDir()
+		for _, f := range c.files {
+			appendFile(t, filepath.Join(dir, f), "")
+		}
+		got, ok := DetectFormat(filepath.Join(dir, "*"))
+		want := ""
+		if c.want != "" {
+			want = filepath.Join(dir, c.want)
+		}
+		if got != want || ok != (c.want != "") {
+			t.Errorf("%v: got %q %v, want %q", c.files, got, ok, want)
+		}
+	}
+}
+
+func TestTailRenameWhileStoppedWithNewFileAtOldName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: path + "*"}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 100)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, &Tracker{}, out); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+	appendFile(t, path, "sent\n")
+	collect(t, out, 1)
+	cancel()
+	<-done
+	pos.Save()
+
+	// logrotate runs while the agent is stopped: app.log -> app.log.1, a new app.log
+	os.Rename(path, path+".1")
+	appendFile(t, path+".1", "tail of old\n")
+	appendFile(t, path, "")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "tail of old" {
+		t.Fatalf("got %q", got)
+	}
+	noMore(t, out)
+}
+
+func TestTailHardLinkIsReadOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.log")
+	appendFile(t, path, "once\n")
+	if err := os.Link(path, filepath.Join(dir, "b.log")); err != nil {
+		t.Skip(err)
+	}
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "*.log"), StartAt: "beginning"}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "p.json")), tr, out)
+	collect(t, out, 1)
+	noMore(t, out)
+	if s := tr.Snapshot(src); len(s.Files) != 1 {
+		t.Fatalf("files %q", s.Files)
+	}
+}
+
+func TestPruneKeepsCursors(t *testing.T) {
+	pos := LoadPositions(filepath.Join(t.TempDir(), "p.json"))
+	pos.Set("journald:nginx.service", Position{Cursor: "c"})
+	pos.Set("gone.log", Position{Inode: 1, Offset: 3})
+	pos.Prune("*", nil)
+	if _, ok := pos.Get("journald:nginx.service"); !ok {
+		t.Fatal("journald cursor pruned")
+	}
+	if _, ok := pos.Get("gone.log"); ok {
+		t.Fatal("deleted file kept")
 	}
 }
