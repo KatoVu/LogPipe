@@ -89,8 +89,8 @@ LogPipe/
 | `main.go` | CLI: `init`, `run`, `track` / `untrack` / `list`, `config get\|set\|edit\|show\|path`, `status`, `check`, `service install\|uninstall`, `version` |
 | `service.go` | `service install` / `uninstall`: a systemd unit or launchd plist that runs the agent at boot |
 | `install.sh` | downloads the release binary for this OS/arch and checks its sha256 |
-| `internal/config` | `agent.yaml` + `conf.d/*.yaml` (Datadog layout), remote config |
-| `internal/source` | tail files (with rotation and offsets), journald, docker socket, syslog |
+| `internal/config` | `agent.yaml` + `conf.d/*.yaml` (Datadog layout), file name formats (`{YYYY}` … `{N}`), remote config |
+| `internal/source` | tail files (rotation, identity by device/inode/head hash, latest file of a dated or numbered series, format detection for `track`), journald, docker socket, syslog |
 | `internal/process` | multiline aggregation, then exclude / include / mask rules in written order |
 | `internal/ship` | OTLP/HTTP JSON batches, gzip, size-capped disk buffer while the server is unreachable |
 | `internal/agent` | run loop, heartbeats, long-poll for config pushes, status |
