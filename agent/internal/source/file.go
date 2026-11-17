@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,21 +28,58 @@ var PollEvery = 250 * time.Millisecond
 type tailed struct {
 	f       *os.File
 	r       *bufio.Reader
-	inode   uint64
+	id      fileID
 	offset  int64
 	partial []byte
+	head    uint64 // hash of the first headLen bytes, to tell a reused inode from the same file
+	headLen int
 }
 
-func inodeOf(fi os.FileInfo) uint64 {
+// fileID is what a file is, independent of its name: renames keep it, a new file changes it.
+type fileID struct{ Dev, Ino uint64 }
+
+func idOf(fi os.FileInfo) fileID {
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return st.Ino
+		return fileID{uint64(st.Dev), st.Ino}
 	}
-	return 0
+	return fileID{}
 }
 
-// TailFiles follows every file matching src.Path, surviving rotation (rename + new file) and
-// truncation (copytruncate). Files present at the first scan start at their saved offset, or at the
-// end unless start_position is "beginning"; files that appear later are read from the start.
+// headSize is how much of a file's start is hashed; logrotate can hand a new file the inode of
+// one it just deleted, and the first bytes tell them apart.
+const headSize = 1024
+
+func headOf(f *os.File, n int) (uint64, int) {
+	buf := make([]byte, n)
+	k, _ := f.ReadAt(buf, 0)
+	h := fnv.New64a()
+	h.Write(buf[:k])
+	return h.Sum64(), k
+}
+
+// same reports whether a saved position belongs to this open file.
+func (t *tailed) same(p Position) bool {
+	if p.Inode != t.id.Ino || p.Dev != 0 && p.Dev != t.id.Dev { // Dev 0: saved before it was recorded
+		return false
+	}
+	if p.HeadLen == 0 {
+		return true
+	}
+	h, n := headOf(t.f, p.HeadLen)
+	return n == p.HeadLen && h == p.Head
+}
+
+func (t *tailed) position() Position {
+	if t.headLen < headSize && t.offset > int64(t.headLen) {
+		t.head, t.headLen = headOf(t.f, headSize)
+	}
+	return Position{Dev: t.id.Dev, Inode: t.id.Ino, Offset: t.offset, Head: t.head, HeadLen: t.headLen}
+}
+
+// TailFiles follows every file matching src.Path, surviving rotation (rename + new file),
+// renames inside the glob (app.log -> app.log.1 is not read twice) and truncation
+// (copytruncate). Files present at the first scan start at their saved offset, or at the end
+// unless start_position is "beginning"; files that appear later are read from the start.
 func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Tracker, out chan<- Line) error {
 	open := map[string]*tailed{}
 	defer func() {
@@ -57,15 +95,44 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 		tr.SetError(err)
 		sort.Strings(matches)
 		tr.SetFiles(matches)
-		seen := map[string]bool{}
+		stats := map[string]os.FileInfo{}
+		where := map[fileID]string{}
 		for _, path := range matches {
-			seen[path] = true
-			fi, err := os.Stat(path)
-			if err != nil || fi.IsDir() {
+			if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+				stats[path] = fi
+				where[idOf(fi)] = path
+			}
+		}
+		// Re-key open files by where they are now, keeping reader and offset across a rename.
+		moved := map[string]*tailed{}
+		var left []string
+		for path, t := range open {
+			if np, ok := where[t.id]; ok {
+				moved[np] = t
+			} else {
+				left = append(left, path)
+			}
+		}
+		for _, path := range left {
+			t := open[path]
+			if _, taken := moved[path]; !taken {
+				moved[path] = t // replaced in place or gone: handled below
+				continue
+			}
+			if !drain(ctx, path, t, tr, out) {
+				return nil
+			}
+			t.f.Close()
+		}
+		open = moved
+
+		for _, path := range matches {
+			fi := stats[path]
+			if fi == nil {
 				continue
 			}
 			t := open[path]
-			if t != nil && t.inode != inodeOf(fi) {
+			if t != nil && t.id != idOf(fi) {
 				// Rotated: drain the old file, then follow the new one from its start.
 				if !drain(ctx, path, t, tr, out) {
 					return nil
@@ -73,35 +140,43 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				t.f.Close()
 				t = nil
 				delete(open, path)
-				if t, err = openAt(path, 0, fi); err == nil {
-					open[path] = t
-				}
-			}
-			if t == nil {
-				off := int64(0)
-				if p, ok := pos.Get(path); ok && p.Inode == inodeOf(fi) && p.Offset <= fi.Size() {
-					off = p.Offset
-				} else if first && src.StartAt != "beginning" {
-					off = fi.Size()
-				}
-				if t, err = openAt(path, off, fi); err != nil {
+				if t, err = openFile(path, fi); err != nil {
 					tr.SetError(err)
 					continue
 				}
 				open[path] = t
 			}
-			if fi.Size() < t.offset { // truncated in place
-				t.f.Seek(0, io.SeekStart)
-				t.r.Reset(t.f)
-				t.offset, t.partial = 0, nil
+			if t == nil {
+				if t, err = openFile(path, fi); err != nil {
+					tr.SetError(err)
+					continue
+				}
+				off := int64(0)
+				if p, ok := pos.Get(path); ok && t.same(p) && p.Offset <= fi.Size() {
+					off = p.Offset
+				} else if p, ok := pos.Find(t); ok && p.Offset <= fi.Size() {
+					off = p.Offset // renamed while the agent was down
+				} else if first && src.StartAt != "beginning" {
+					off = fi.Size()
+				}
+				if err := t.seek(off); err != nil {
+					t.f.Close()
+					tr.SetError(err)
+					continue
+				}
+				open[path] = t
+			}
+			if fi.Size() < t.offset { // truncated in place: new content, new head
+				t.seek(0)
+				t.head, t.headLen = headOf(t.f, headSize)
 			}
 			if !drain(ctx, path, t, tr, out) {
 				return nil
 			}
-			pos.Set(path, Position{Inode: t.inode, Offset: t.offset})
+			pos.Set(path, t.position())
 		}
 		for path, t := range open {
-			if !seen[path] { // deleted or no longer matching
+			if stats[path] == nil { // deleted or no longer matching
 				drain(ctx, path, t, tr, out)
 				t.f.Close()
 				delete(open, path)
@@ -116,16 +191,23 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 	}
 }
 
-func openAt(path string, off int64, fi os.FileInfo) (*tailed, error) {
+func openFile(path string, fi os.FileInfo) (*tailed, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		f.Close()
-		return nil, err
+	t := &tailed{f: f, r: bufio.NewReaderSize(f, 64*1024), id: idOf(fi)}
+	t.head, t.headLen = headOf(f, headSize)
+	return t, nil
+}
+
+func (t *tailed) seek(off int64) error {
+	if _, err := t.f.Seek(off, io.SeekStart); err != nil {
+		return err
 	}
-	return &tailed{f: f, r: bufio.NewReaderSize(f, 64*1024), inode: inodeOf(fi), offset: off}, nil
+	t.r.Reset(t.f)
+	t.offset, t.partial = off, nil
+	return nil
 }
 
 // drain sends every complete line; a trailing partial line waits for its newline. The offset only

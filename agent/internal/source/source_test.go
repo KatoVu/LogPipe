@@ -143,3 +143,70 @@ func TestSeriesName(t *testing.T) {
 		}
 	}
 }
+
+func noMore(t *testing.T, out <-chan Line) {
+	t.Helper()
+	select {
+	case l := <-out:
+		t.Fatalf("unexpected extra line %q from %s", l.Text, l.Key)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestTailRenameInsideGlobIsNotReadTwice(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: path + "*"}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 100)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, &Tracker{}, out); close(done) }()
+
+	time.Sleep(50 * time.Millisecond)
+	appendFile(t, path, "one\n")
+	collect(t, out, 1)
+	os.Rename(path, path+".1")
+	appendFile(t, path+".1", "late write to old file\n")
+	appendFile(t, path, "two\n")
+	got := collect(t, out, 2)
+	if len(got) != 2 || !(got[0] == "late write to old file" && got[1] == "two" || got[1] == "late write to old file" && got[0] == "two") {
+		t.Fatalf("got %q", got)
+	}
+	noMore(t, out)
+	cancel()
+	<-done
+	pos.Save()
+
+	// renamed again while the agent is down: resumes under the new name, nothing resent
+	os.Rename(path+".1", path+".2")
+	appendFile(t, path+".2", "while down\n")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "while down" {
+		t.Fatalf("resume after rename: %q", got)
+	}
+	noMore(t, out)
+}
+
+func TestTailReusedInodeIsANewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "fresh\n")
+	fi, _ := os.Stat(path)
+	id := idOf(fi)
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	// what an older, deleted file with the same inode left behind
+	pos.Set(path, Position{Dev: id.Dev, Inode: id.Ino, Offset: 6, Head: 1, HeadLen: 6})
+	src := config.Source{Type: "file", Path: path, StartAt: "beginning"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, pos, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "fresh" {
+		t.Fatalf("reused inode skipped the new file: %q", got)
+	}
+}

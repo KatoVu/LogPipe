@@ -119,9 +119,12 @@ type Positions struct {
 }
 
 type Position struct {
-	Inode  uint64 `json:"inode,omitempty"`
-	Offset int64  `json:"offset,omitempty"`
-	Cursor string `json:"cursor,omitempty"`
+	Dev     uint64 `json:"dev,omitempty"`
+	Inode   uint64 `json:"inode,omitempty"`
+	Offset  int64  `json:"offset,omitempty"`
+	Head    uint64 `json:"head,omitempty"`
+	HeadLen int    `json:"head_len,omitempty"`
+	Cursor  string `json:"cursor,omitempty"`
 }
 
 func LoadPositions(path string) *Positions {
@@ -143,6 +146,19 @@ func (p *Positions) Set(key string, v Position) {
 	p.mu.Lock()
 	p.m[key] = v
 	p.mu.Unlock()
+}
+
+// Find returns the saved position of an open file under any name, for a file renamed while the
+// agent was stopped.
+func (p *Positions) Find(t *tailed) (Position, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, v := range p.m {
+		if v.Inode == t.id.Ino && t.same(v) {
+			return v, true
+		}
+	}
+	return Position{}, false
 }
 
 func (p *Positions) Save() error {
