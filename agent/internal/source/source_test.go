@@ -287,3 +287,34 @@ func TestServiceName(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectFormat(t *testing.T) {
+	for _, c := range []struct {
+		files []string
+		want  string
+	}{
+		{[]string{"01.txt", "02.txt", "10.txt"}, "{N}.txt"},
+		{[]string{"20-11-2026.txt", "21-11-2026.txt"}, "{DD}-{MM}-{YYYY}.txt"},
+		{[]string{"app-2026-11-17.log", "app-2026-11-18.log"}, "app-{YYYY}-{MM}-{DD}.log"},
+		{[]string{"app_20261117.log"}, "app_{YYYY}{MM}{DD}.log"}, // a date is clear from one file
+		{[]string{"app-2026-11-17-1.log", "app-2026-11-17-2.log", "app-2026-11-18-1.log"}, "app-{YYYY}-{MM}-{DD}-{N}.log"},
+		{[]string{"v2-app.1.log", "v2-app.2.log"}, "v2-app.{N}.log"}, // digits that never change stay
+		{[]string{"app.log"}, ""},
+		{[]string{"01.txt"}, ""},               // one counter tells nothing
+		{[]string{"a1-1.txt", "a2-2.txt"}, ""}, // two runs vary: not one series
+		{[]string{"01.txt", "notes.txt"}, ""},  // another file shares the glob
+	} {
+		dir := t.TempDir()
+		for _, f := range c.files {
+			appendFile(t, filepath.Join(dir, f), "")
+		}
+		got, ok := DetectFormat(filepath.Join(dir, "*"))
+		want := ""
+		if c.want != "" {
+			want = filepath.Join(dir, c.want)
+		}
+		if got != want || ok != (c.want != "") {
+			t.Errorf("%v: got %q %v, want %q", c.files, got, ok, want)
+		}
+	}
+}

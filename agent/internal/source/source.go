@@ -34,7 +34,7 @@ type Stats struct {
 	Bytes    int64    `json:"bytes"`
 	LastLine string   `json:"last_line_at,omitempty"`
 	Files    []string `json:"files,omitempty"`
-	// Skipped are matched files released because a newer file of their series took over.
+	// Skipped are matched files a name-format source does not tail (not the latest of its series).
 	Skipped []string `json:"skipped_files,omitempty"`
 	Error   string   `json:"error,omitempty"`
 }

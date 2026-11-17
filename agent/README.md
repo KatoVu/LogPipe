@@ -119,12 +119,12 @@ auto_multi_line_detection: false  # default for sources without a multi_line rul
 ```yaml
 logs:
   - type: file                  # file | journald | docker | tcp | udp
-    path: /var/log/myapp/*.log  # file: glob
+    path: /var/log/myapp/*.log  # file: glob, or a name format: /var/log/myapp/{DD}-{MM}-{YYYY}.txt
+    latest: highest             # with a name format: highest (default) or lowest value is the newest file
     service: myapp
     source: java
     tags: [team:payments]
     start_position: end         # end (default) or beginning, for files seen the first time
-    ignore_older_than: 24h      # release a file once a newer one in its series exists and it is this quiet; 0 = never
     log_processing_rules:
       - type: multi_line        # lines not matching start a continuation of the previous event
         name: new_event
@@ -158,15 +158,18 @@ logs:
   renamed inside the glob (`app.log` -> `app.log.1`, even while the agent is stopped) keeps its
   offset instead of being read again, and a new file that reuses a deleted file's inode is read
   from its start.
-- **Log series**: `app.log`, `app.log.3`, `app.001.log`, `app-2026-11-17.log`, `app-17-11-2026.log`
-  and `app.log.1.gz` are one series, `app`, which is also the service when `service:` is unset.
-  Files named only by a date or number (`myapp/01.txt`, `myapp/20-11-2026.txt`) take the folder's
-  name, `myapp`. Once a newer file of
-  the series exists and an older one has been quiet for `ignore_older_than` (default 24h), the old
-  one is drained and closed and listed under `skipped_files` in `status`. It is still checked: a
-  write to it reopens it at its offset. A quiet file with no newer sibling (`error.log`) is never
-  released. On the first start, released files are not replayed even with
-  `start_position: beginning`; set `ignore_older_than: 0` to backfill an archive.
+- **Dated and numbered files**: put placeholders where the name changes: `{YYYY}` `{MM}` `{DD}`
+  `{HH}` `{N}`, e.g. `/var/log/myapp/{DD}-{MM}-{YYYY}.txt`, `/var/log/myapp/{N}.txt` or
+  `/var/log/app-{YYYY}{MM}{DD}-{N}.log` (`*` still works in the rest of the path). Only the latest
+  file is tailed: the newest date, then the highest `{N}` (`latest: lowest` for the lowest). When a
+  later file appears, the previous one is still tailed for a minute to catch late writes, then
+  closed. A file that began while the agent was down is read whole, and files the last run left
+  unread are finished on start. Older files are listed as `skipped_files` in `status`. Without
+  `service:`, the service is the fixed start of the name (`app-{YYYY}...` -> `app`), else the
+  folder (`myapp/{N}.txt` -> `myapp`).
+  `logpipe-agent track '/var/log/myapp/*.txt'` looks at the files that match and, if they share one
+  name format, writes it into the config for you; edit `path` if it guessed wrong (for example a
+  US month-first date, which it reads as day-first).
 - **Shipping**: batches of up to 500 events or 1 s as **OpenTelemetry OTLP/HTTP** (JSON, gzip) to
   `POST /v1/logs` with `X-API-Key`: resource `host.name`, `service.name`, `os.type`,
   `host.arch`; per record the body, `observedTimeUnixNano`, `log.file.path`/`log.file.name`.
