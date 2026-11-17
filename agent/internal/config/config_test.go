@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, body string) {
@@ -50,9 +51,16 @@ func TestValidateRejectsBadSources(t *testing.T) {
 		{Type: "tcp"},
 		{Type: "file", Path: "/x", Rules: []Rule{{Type: "multi_line", Pattern: "("}}},
 		{Type: "file", Path: "/x", Rules: []Rule{{Type: "bogus", Pattern: "x"}}},
+		{Type: "file", Path: "/x", IgnoreOlderThan: "7d"},
+		{Type: "file", Path: "/x", IgnoreOlderThan: "-1h"},
 	} {
 		if s.Validate() == nil {
 			t.Errorf("expected %+v to be invalid", s)
+		}
+	}
+	for in, want := range map[string]time.Duration{"": 24 * time.Hour, "0": 0, "168h": 168 * time.Hour} {
+		if got := (Source{IgnoreOlderThan: in}).IgnoreOlder(); got != want {
+			t.Errorf("IgnoreOlder(%q) = %v, want %v", in, got, want)
 		}
 	}
 }

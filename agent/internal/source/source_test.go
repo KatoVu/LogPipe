@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -208,5 +209,69 @@ func TestTailReusedInodeIsANewFile(t *testing.T) {
 	go TailFiles(ctx, src, pos, &Tracker{}, out)
 	if got := collect(t, out, 1); got[0] != "fresh" {
 		t.Fatalf("reused inode skipped the new file: %q", got)
+	}
+}
+
+func TestSuperseded(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	age := map[string]time.Duration{
+		"app-2026-11-15.log": 72 * time.Hour, // older sibling, quiet long enough: released
+		"app-2026-11-16.log": 2 * time.Hour,  // older sibling, but recently written: kept
+		"app-2026-11-17.log": 0,
+		"error.log":          240 * time.Hour, // quiet for days but alone in its series: kept
+	}
+	stats := map[string]os.FileInfo{}
+	for name, a := range age {
+		p := filepath.Join(dir, name)
+		appendFile(t, p, "x\n")
+		os.Chtimes(p, now.Add(-a), now.Add(-a))
+		stats[p], _ = os.Stat(p)
+	}
+	got := superseded(stats, 24*time.Hour, now)
+	if len(got) != 1 || !got[filepath.Join(dir, "app-2026-11-15.log")] {
+		t.Fatalf("got %v", got)
+	}
+	if got := superseded(stats, 0, now); len(got) != 0 {
+		t.Fatalf("ignore_older_than 0 released %v", got)
+	}
+}
+
+func TestTailReleasesSupersededFilesWithoutLosingLines(t *testing.T) {
+	dir := t.TempDir()
+	old, cur, lone := filepath.Join(dir, "app-2026-11-15.log"), filepath.Join(dir, "app-2026-11-17.log"), filepath.Join(dir, "error.log")
+	for _, p := range []string{old, cur, lone} {
+		appendFile(t, p, filepath.Base(p)+"\n")
+	}
+	week := time.Now().Add(-7 * 24 * time.Hour)
+	os.Chtimes(old, week, week)
+	os.Chtimes(lone, week, week)
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "*.log"), StartAt: "beginning"}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, pos, tr, out)
+
+	got := collect(t, out, 2)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"app-2026-11-17.log", "error.log"}) {
+		t.Fatalf("archive replayed or live file dropped: %q", got)
+	}
+	noMore(t, out)
+	if s := tr.Snapshot(src); !reflect.DeepEqual(s.Skipped, []string{old}) {
+		t.Fatalf("skipped_files = %q", s.Skipped)
+	}
+	// a released file that is written again is picked up from where it was, nothing resent
+	appendFile(t, old, "late\n")
+	if got := collect(t, out, 1); got[0] != "late" {
+		t.Fatalf("late write: %q", got)
+	}
+	// deleted files leave positions.json
+	os.Remove(old)
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := pos.Get(old); ok {
+		t.Fatal("position of a deleted file kept")
 	}
 }

@@ -34,16 +34,19 @@ type Stats struct {
 	Bytes    int64    `json:"bytes"`
 	LastLine string   `json:"last_line_at,omitempty"`
 	Files    []string `json:"files,omitempty"`
-	Error    string   `json:"error,omitempty"`
+	// Skipped are matched files released because a newer file of their series took over.
+	Skipped []string `json:"skipped_files,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 type Tracker struct {
-	mu    sync.Mutex
-	lines atomic.Int64
-	bytes atomic.Int64
-	last  atomic.Int64
-	files []string
-	err   string
+	mu      sync.Mutex
+	lines   atomic.Int64
+	bytes   atomic.Int64
+	last    atomic.Int64
+	files   []string
+	skipped []string
+	err     string
 }
 
 func (t *Tracker) Count(text string) {
@@ -67,11 +70,17 @@ func (t *Tracker) SetFiles(files []string) {
 	t.mu.Unlock()
 }
 
+func (t *Tracker) SetSkipped(files []string) {
+	t.mu.Lock()
+	t.skipped = files
+	t.mu.Unlock()
+}
+
 func (t *Tracker) Snapshot(src config.Source) Stats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	s := Stats{ID: src.ID(), Type: src.Type, Target: Target(src), Service: src.Service,
-		Lines: t.lines.Load(), Bytes: t.bytes.Load(), Files: t.files, Error: t.err}
+		Lines: t.lines.Load(), Bytes: t.bytes.Load(), Files: t.files, Skipped: t.skipped, Error: t.err}
 	if ms := t.last.Load(); ms > 0 {
 		s.LastLine = time.UnixMilli(ms).UTC().Format(time.RFC3339)
 	}
@@ -159,6 +168,22 @@ func (p *Positions) Find(t *tailed) (Position, bool) {
 		}
 	}
 	return Position{}, false
+}
+
+// Prune forgets files that match glob but no longer exist, so dated logs that were deleted do
+// not pile up in positions.json. Keys that are not paths never match a path glob.
+func (p *Positions) Prune(glob string, matches []string) {
+	exists := make(map[string]bool, len(matches))
+	for _, m := range matches {
+		exists[m] = true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for k := range p.m {
+		if ok, _ := filepath.Match(glob, k); ok && !exists[k] {
+			delete(p.m, k)
+		}
+	}
 }
 
 func (p *Positions) Save() error {

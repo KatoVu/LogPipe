@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,9 +52,12 @@ type Source struct {
 	Src     string   `yaml:"source,omitempty" json:"source,omitempty"`
 	Tags    []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// StartAt is "end" (default, like tail -f) or "beginning" for files seen for the first time.
-	StartAt       string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
-	AutoMultiLine *bool  `yaml:"auto_multi_line_detection,omitempty" json:"auto_multi_line_detection,omitempty"`
-	Rules         []Rule `yaml:"log_processing_rules,omitempty" json:"log_processing_rules,omitempty"`
+	StartAt string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
+	// IgnoreOlderThan releases a file once a newer file of its series exists and it has been quiet
+	// this long (Go duration, default 24h, 0 = never). A lone quiet file is never released.
+	IgnoreOlderThan string `yaml:"ignore_older_than,omitempty" json:"ignore_older_than,omitempty"`
+	AutoMultiLine   *bool  `yaml:"auto_multi_line_detection,omitempty" json:"auto_multi_line_detection,omitempty"`
+	Rules           []Rule `yaml:"log_processing_rules,omitempty" json:"log_processing_rules,omitempty"`
 	// File is the conf.d file this source came from (filled on load).
 	File string `yaml:"-" json:"file"`
 }
@@ -216,6 +220,11 @@ func (s Source) Validate() error {
 	if s.StartAt != "" && s.StartAt != "end" && s.StartAt != "beginning" {
 		return fmt.Errorf("start_position must be end or beginning")
 	}
+	if s.IgnoreOlderThan != "" {
+		if d, err := time.ParseDuration(s.IgnoreOlderThan); err != nil || d < 0 {
+			return fmt.Errorf("ignore_older_than must be a duration like 24h or 0, got %q", s.IgnoreOlderThan)
+		}
+	}
 	for _, r := range s.Rules {
 		if !RuleTypes[r.Type] {
 			return fmt.Errorf("unknown rule type %q", r.Type)
@@ -225,6 +234,15 @@ func (s Source) Validate() error {
 		}
 	}
 	return nil
+}
+
+// IgnoreOlder is IgnoreOlderThan parsed, with its 24h default.
+func (s Source) IgnoreOlder() time.Duration {
+	if s.IgnoreOlderThan == "" {
+		return 24 * time.Hour
+	}
+	d, _ := time.ParseDuration(s.IgnoreOlderThan)
+	return d
 }
 
 // ID names a source stably across reloads, used for offsets and per-source stats.

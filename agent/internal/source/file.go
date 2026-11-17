@@ -76,10 +76,49 @@ func (t *tailed) position() Position {
 	return Position{Dev: t.id.Dev, Inode: t.id.Ino, Offset: t.offset, Head: t.head, HeadLen: t.headLen}
 }
 
+// superseded lists files that a newer file of the same series (same directory and SeriesName)
+// has replaced and that have been quiet for longer than quiet. A file with no newer sibling is
+// never superseded, however long it stays quiet.
+func superseded(stats map[string]os.FileInfo, quiet time.Duration, now time.Time) map[string]bool {
+	if quiet <= 0 {
+		return nil
+	}
+	series := func(p string) string { return filepath.Join(filepath.Dir(p), SeriesName(p)) }
+	newest := map[string]time.Time{}
+	for p, fi := range stats {
+		if k := series(p); fi.ModTime().After(newest[k]) {
+			newest[k] = fi.ModTime()
+		}
+	}
+	out := map[string]bool{}
+	for p, fi := range stats {
+		if fi.ModTime().Before(newest[series(p)]) && now.Sub(fi.ModTime()) > quiet {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// resume finds where to continue an opened file: its saved offset under this name, or under any
+// name (renamed while the agent was down).
+func resume(pos *Positions, path string, t *tailed, size int64) (int64, bool) {
+	if p, ok := pos.Get(path); ok && t.same(p) && p.Offset <= size {
+		return p.Offset, true
+	}
+	if p, ok := pos.Find(t); ok && p.Offset <= size {
+		return p.Offset, true
+	}
+	return 0, false
+}
+
 // TailFiles follows every file matching src.Path, surviving rotation (rename + new file),
 // renames inside the glob (app.log -> app.log.1 is not read twice) and truncation
 // (copytruncate). Files present at the first scan start at their saved offset, or at the end
 // unless start_position is "beginning"; files that appear later are read from the start.
+//
+// Superseded files (see superseded) are drained, closed and marked read to their end, then only
+// stat'ed: a write to one makes it recent again and it is reopened at its saved offset, so
+// releasing a file never loses a line.
 func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Tracker, out chan<- Line) error {
 	open := map[string]*tailed{}
 	defer func() {
@@ -125,6 +164,14 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			t.f.Close()
 		}
 		open = moved
+		skip := superseded(stats, src.IgnoreOlder(), time.Now())
+		var skipped []string
+		for _, path := range matches {
+			if skip[path] {
+				skipped = append(skipped, path)
+			}
+		}
+		tr.SetSkipped(skipped)
 
 		for _, path := range matches {
 			fi := stats[path]
@@ -132,6 +179,26 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				continue
 			}
 			t := open[path]
+			if id := idOf(fi); skip[path] && (t == nil || t.id == id) {
+				if t != nil {
+					if !drain(ctx, path, t, tr, out) {
+						return nil
+					}
+					pos.Set(path, t.position())
+					t.f.Close()
+					delete(open, path)
+				} else if p, ok := pos.Get(path); !ok || p.Inode != id.Ino || p.Dev != id.Dev {
+					// Never read: count it as read to its end, so a later write sends only new lines.
+					if t, err = openFile(path, fi); err == nil {
+						if t.offset, ok = resume(pos, path, t, fi.Size()); !ok {
+							t.offset = fi.Size()
+						}
+						pos.Set(path, t.position())
+						t.f.Close()
+					}
+				}
+				continue
+			}
 			if t != nil && t.id != idOf(fi) {
 				// Rotated: drain the old file, then follow the new one from its start.
 				if !drain(ctx, path, t, tr, out) {
@@ -151,12 +218,8 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 					tr.SetError(err)
 					continue
 				}
-				off := int64(0)
-				if p, ok := pos.Get(path); ok && t.same(p) && p.Offset <= fi.Size() {
-					off = p.Offset
-				} else if p, ok := pos.Find(t); ok && p.Offset <= fi.Size() {
-					off = p.Offset // renamed while the agent was down
-				} else if first && src.StartAt != "beginning" {
+				off, ok := resume(pos, path, t, fi.Size())
+				if !ok && first && src.StartAt != "beginning" {
 					off = fi.Size()
 				}
 				if err := t.seek(off); err != nil {
@@ -182,6 +245,7 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				delete(open, path)
 			}
 		}
+		pos.Prune(src.Path, matches) // after the loop: a renamed file was looked up by its old name
 		first = false
 		select {
 		case <-ctx.Done():
