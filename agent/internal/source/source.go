@@ -171,7 +171,8 @@ func (p *Positions) Find(t *tailed) (Position, bool) {
 }
 
 // Prune forgets files that match glob but no longer exist, so dated logs that were deleted do
-// not pile up in positions.json. Keys that are not paths never match a path glob.
+// not pile up in positions.json. Journald and docker entries hold a Cursor and are never pruned,
+// even when a glob like "*" matches their keys.
 func (p *Positions) Prune(glob string, matches []string) {
 	exists := make(map[string]bool, len(matches))
 	for _, m := range matches {
@@ -180,7 +181,7 @@ func (p *Positions) Prune(glob string, matches []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for k := range p.m {
-		if ok, _ := filepath.Match(glob, k); ok && !exists[k] {
+		if ok, _ := filepath.Match(glob, k); ok && !exists[k] && p.m[k].Cursor == "" {
 			delete(p.m, k)
 		}
 	}

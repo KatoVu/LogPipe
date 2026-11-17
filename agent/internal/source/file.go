@@ -165,10 +165,19 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 		tr.SetError(err)
 		sort.Strings(matches)
 		stats := map[string]os.FileInfo{}
+		ids := map[fileID]bool{}
 		for _, path := range matches {
-			if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
-				stats[path] = fi
+			fi, err := os.Stat(path)
+			if err != nil || fi.IsDir() {
+				continue
 			}
+			if id := idOf(fi); id != (fileID{}) {
+				if ids[id] { // a hard link to a file already matched: one reader per file
+					continue
+				}
+				ids[id] = true
+			}
+			stats[path] = fi
 		}
 		if f != nil {
 			latest = pickLatest(f, src.Latest == "lowest", stats, pos, first, latest, grace)
@@ -209,6 +218,9 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			t.f.Close()
 		}
 		open = moved
+		// Saved after the scan: a new app.log must not overwrite the entry that app.log.1, renamed
+		// while the agent was stopped, is looked up by later in the same scan.
+		saved := map[string]Position{}
 		for _, path := range matches {
 			fi := stats[path]
 			if fi == nil {
@@ -223,14 +235,14 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				t.f.Close()
 				t = nil
 				delete(open, path)
-				if t, err = openFile(path, fi); err != nil {
+				if t, fi, err = openFile(path); err != nil {
 					tr.SetError(err)
 					continue
 				}
 				open[path] = t
 			}
 			if t == nil {
-				if t, err = openFile(path, fi); err != nil {
+				if t, fi, err = openFile(path); err != nil {
 					tr.SetError(err)
 					continue
 				}
@@ -254,7 +266,10 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			if !drain(ctx, path, t, tr, out) {
 				return nil
 			}
-			pos.Set(path, t.position())
+			saved[path] = t.position()
+		}
+		for path, p := range saved {
+			pos.Set(path, p)
 		}
 		for path, t := range open {
 			if stats[path] == nil { // deleted or no longer matching
@@ -273,14 +288,21 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 	}
 }
 
-func openFile(path string, fi os.FileInfo) (*tailed, error) {
+// openFile opens path and describes what was opened, not what the path held a moment earlier,
+// so a rotation between the scan's stat and this open cannot mix up two files.
+func openFile(path string) (*tailed, os.FileInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
 	}
 	t := &tailed{f: f, r: bufio.NewReaderSize(f, 64*1024), id: idOf(fi)}
 	t.head, t.headLen = headOf(f, headSize)
-	return t, nil
+	return t, fi, nil
 }
 
 func (t *tailed) seek(off int64) error {
@@ -322,6 +344,9 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 func ServiceName(src config.Source, path string) string {
 	if config.HasFormat(src.Path) {
 		path = src.Path
+	}
+	if abs, err := filepath.Abs(path); err == nil { // a relative 01.txt still has a folder
+		path = abs
 	}
 	for p := path; p != "." && p != "/"; p = filepath.Dir(p) {
 		name := strings.Trim(config.StaticName(p), "-_. ")

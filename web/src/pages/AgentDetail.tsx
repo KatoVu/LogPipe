@@ -80,7 +80,12 @@ export default function AgentDetail() {
                         <td><span className="badge">{s.type}</span></td>
                         <td className="mono small">{s.target}
                           {s.files && s.files.length > 0 && s.type === "file" && <div className="muted">{s.files.length} file{s.files.length > 1 ? "s" : ""}: {s.files.slice(0, 3).join(", ")}{s.files.length > 3 ? "…" : ""}</div>}
-                          {s.skipped_files && s.skipped_files.length > 0 && <div className="muted" title={s.skipped_files.join("\n")}>{s.skipped_files.length} older file{s.skipped_files.length > 1 ? "s" : ""} of the series not tailed</div>}
+                          {s.skipped_files && s.skipped_files.length > 0 && (
+                            <details className="muted">
+                              <summary>{s.skipped_files.length} older file{s.skipped_files.length > 1 ? "s" : ""} of the series not tailed</summary>
+                              {s.skipped_files.map((f) => <div key={f}>{f}</div>)}
+                            </details>
+                          )}
                           {s.files && s.type === "docker" && <div className="muted">{s.files.join(", ")}</div>}
                           {s.error && <div className="error-text">{s.error}</div>}
                         </td>

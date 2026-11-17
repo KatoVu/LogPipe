@@ -274,6 +274,7 @@ func TestTailLatestLowest(t *testing.T) {
 }
 
 func TestServiceName(t *testing.T) {
+	cwd, _ := os.Getwd()
 	for _, c := range [][3]string{
 		{"/l/app-{YYYY}-{MM}-{DD}.log", "/l/app-2026-11-17.log", "app"},
 		{"/l/myapp/{DD}-{MM}-{YYYY}.txt", "/l/myapp/20-11-2026.txt", "myapp"},
@@ -281,6 +282,7 @@ func TestServiceName(t *testing.T) {
 		{"/l/app.log.{N}", "/l/app.log.3", "app"},
 		{"/l/{YYYY}/{MM}/{DD}/api.log", "/l/2026/11/17/api.log", "api"},
 		{"/l/*.log", "/l/worker.log", "worker"},
+		{"{N}.txt", "01.txt", filepath.Base(cwd)}, // relative: the working directory's name
 	} {
 		if got := ServiceName(config.Source{Path: c[0]}, c[1]); got != c[2] {
 			t.Errorf("ServiceName(%q) = %q, want %q", c[0], got, c[2])
@@ -316,5 +318,69 @@ func TestDetectFormat(t *testing.T) {
 		if got != want || ok != (c.want != "") {
 			t.Errorf("%v: got %q %v, want %q", c.files, got, ok, want)
 		}
+	}
+}
+
+func TestTailRenameWhileStoppedWithNewFileAtOldName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	pos := LoadPositions(filepath.Join(dir, "positions.json"))
+	src := config.Source{Type: "file", Path: path + "*"}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Line, 100)
+	done := make(chan struct{})
+	go func() { TailFiles(ctx, src, pos, &Tracker{}, out); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+	appendFile(t, path, "sent\n")
+	collect(t, out, 1)
+	cancel()
+	<-done
+	pos.Save()
+
+	// logrotate runs while the agent is stopped: app.log -> app.log.1, a new app.log
+	os.Rename(path, path+".1")
+	appendFile(t, path+".1", "tail of old\n")
+	appendFile(t, path, "")
+	pos2 := LoadPositions(filepath.Join(dir, "positions.json"))
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go TailFiles(ctx, src, pos2, &Tracker{}, out)
+	if got := collect(t, out, 1); got[0] != "tail of old" {
+		t.Fatalf("got %q", got)
+	}
+	noMore(t, out)
+}
+
+func TestTailHardLinkIsReadOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.log")
+	appendFile(t, path, "once\n")
+	if err := os.Link(path, filepath.Join(dir, "b.log")); err != nil {
+		t.Skip(err)
+	}
+	src := config.Source{Type: "file", Path: filepath.Join(dir, "*.log"), StartAt: "beginning"}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "p.json")), tr, out)
+	collect(t, out, 1)
+	noMore(t, out)
+	if s := tr.Snapshot(src); len(s.Files) != 1 {
+		t.Fatalf("files %q", s.Files)
+	}
+}
+
+func TestPruneKeepsCursors(t *testing.T) {
+	pos := LoadPositions(filepath.Join(t.TempDir(), "p.json"))
+	pos.Set("journald:nginx.service", Position{Cursor: "c"})
+	pos.Set("gone.log", Position{Inode: 1, Offset: 3})
+	pos.Prune("*", nil)
+	if _, ok := pos.Get("journald:nginx.service"); !ok {
+		t.Fatal("journald cursor pruned")
+	}
+	if _, ok := pos.Get("gone.log"); ok {
+		t.Fatal("deleted file kept")
 	}
 }
