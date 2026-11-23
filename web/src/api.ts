@@ -327,7 +327,7 @@ export interface Group {
 
 export interface Warning {
   id: string;
-  kind: "new_source" | "novel_template";
+  kind: "new_source" | "novel_template" | "volume" | "ingestion";
   subject: string;
   title: string;
   detail: string;

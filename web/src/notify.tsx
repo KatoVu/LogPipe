@@ -1,10 +1,11 @@
-// Toasts (and, opted in, desktop notifications) for a new anomaly incident, a firing metric alert,
+// Toasts (and, opted in, desktop notifications) for a new anomaly incident, a volume or ingestion
+// warning, a firing metric alert,
 // new maintenance to-dos, templates linked to an existing one and jobs that are queued, finish or fail; all but queued jobs also
 // chime unless muted. Plus the counts the sidebar shows. Only what changes after the page
 // loaded is announced, never the backlog.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { usePoll, type Incident, type Job } from "./api";
+import { usePoll, type Incident, type Job, type Warning } from "./api";
 import type { MetricAlert } from "./pages/System";
 import { JOB_NAMES, jobTarget, Switch } from "./ui";
 
@@ -48,6 +49,9 @@ export function useNotifications(todo?: number, links?: number) {
   const incidents = usePoll<{ incidents: Incident[] }>("/api/incidents", 5000).data?.incidents;
   const jobs = usePoll<{ jobs: Job[] }>("/api/jobs", 3000).data?.jobs;
   const metricAlerts = usePoll<{ alerts: MetricAlert[] }>("/api/system/alerts", 10000).data?.alerts;
+  const volume = usePoll<{ warnings: Warning[] }>("/api/warnings", 10000).data?.warnings
+    .filter((w) => w.status === "open" && (w.kind === "volume" || w.kind === "ingestion"));
+  const seenVolume = useRef<Set<string> | null>(null);
   const seenMetric = useRef<Set<string> | null>(null);
   const seenIncidents = useRef<Set<string> | null>(null);
   const seenJobs = useRef<Map<string, Job["status"]> | null>(null);
@@ -76,6 +80,17 @@ export function useNotifications(todo?: number, links?: number) {
         body: `${i.host}: ${Math.round(i.peak_miss * 100)}% of events mispredicted. Open to see the unusual lines.` }, true, true);
     }
   }, [incidents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!volume) return;
+    const keys = volume.map((w) => `${w.id}@${w.first_seen}`);
+    if (seenVolume.current === null) { seenVolume.current = new Set(keys); return; }
+    volume.forEach((w, i) => {
+      if (seenVolume.current!.has(keys[i])) return;
+      seenVolume.current!.add(keys[i]);
+      push({ id: `vol-${keys[i]}`, title: w.title, body: w.detail, tone: "bad", to: "/alerts" }, true, true);
+    });
+  }, [volume?.map((w) => `${w.id}@${w.first_seen}`).join()]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!metricAlerts) return;
@@ -128,7 +143,7 @@ export function useNotifications(todo?: number, links?: number) {
 
   return {
     toasts, dismiss: (id: string) => setToasts((all) => all.filter((x) => x.id !== id)),
-    openIncidents: incidents?.filter((i) => i.status === "open").length ?? 0,
+    openIncidents: (incidents?.filter((i) => i.status === "open").length ?? 0) + (volume?.length ?? 0),
     firingMetrics: metricAlerts?.filter((a) => a.status === "firing").length ?? 0,
     activeJobs: jobs?.filter((j) => j.status === "queued" || j.status === "running").length ?? 0,
   };

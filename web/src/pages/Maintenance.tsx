@@ -7,6 +7,8 @@ import { Card, Empty, Loading, Meter, PageHead, TimeAgo, fmt, sourceLabel } from
 import { TemplatePicker } from "../rules";
 import { AutoTemplates } from "./Review";
 
+const WARNING_TAGS: Record<Warning["kind"], string> = { new_source: "Source", novel_template: "Template", volume: "Volume", ingestion: "Ingestion" };
+
 function Item({ tag, tone = "", title, children, actions }: {
   tag: string; tone?: string; title: ReactNode; children?: ReactNode; actions?: ReactNode;
 }) {
@@ -93,7 +95,7 @@ function History() {
   return (
     <ul className="todos">
       {done.map((w) => (
-        <Item key={w.id} tag={w.kind === "new_source" ? "Source" : "Template"} title={w.title}>
+        <Item key={w.id} tag={WARNING_TAGS[w.kind]} title={w.title}>
           <span className="muted small">{w.resolution} · <TimeAgo iso={w.resolved_at} /></span>
         </Item>
       ))}
