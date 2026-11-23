@@ -160,3 +160,14 @@ def test_server_warns_when_a_source_goes_silent_unless_its_logs_are_held_up(env)
     assert warning("ingestion:h1")["status"] == "resolved"
     server.resolve_warning("volume:h1|api|app")  # resolving accepts the volume as normal
     assert server.volume.models["h1|api|app"].learning > 0
+
+
+def test_a_malformed_agent_status_is_not_an_error():
+    from logpipe.server.volume import ingestion_problems
+
+    agent = {"online": True, "status": {"updated_at": "2026-11-24T10:00:00Z"}}
+    agent["status"]["sources"] = [{"scanned_at": "yesterday"}, {"partial_since": 5}]
+    assert ingestion_problems(agent) == []
+    agent["status"]["updated_at"] = "2026-11-24T10:00:00"  # naive against aware
+    agent["status"]["sources"] = [{"scanned_at": "2026-11-24T09:00:00Z"}]
+    assert ingestion_problems(agent) == []

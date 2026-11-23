@@ -40,17 +40,17 @@ def ingestion_problems(agent: dict) -> list[str]:
     if shipper.get("buffer_bytes"):
         why = f": {shipper['last_error']}" if shipper.get("last_error") else ""
         out.append(f"{shipper['buffer_bytes'] // 1024} KB of logs are waiting to be sent{why}")
-    try:
+    try:  # an agent's status is its own word: a malformed time must not stop the checks
         now = datetime.fromisoformat(status["updated_at"])
-    except (KeyError, ValueError):
-        return out
-    for s in status.get("sources") or []:
-        if s.get("scanned_at") and now - datetime.fromisoformat(s["scanned_at"]) > STUCK:
-            out.append(f"the reader for {s.get('target')} has not run since {s['scanned_at']}")
-        if s.get("partial_since") and now - datetime.fromisoformat(s["partial_since"]) > STUCK:
-            out.append(
-                f"a line in {s.get('target')} has waited for its newline since {s['partial_since']}"
-            )
+        for s in status.get("sources") or []:
+            if s.get("scanned_at") and now - datetime.fromisoformat(s["scanned_at"]) > STUCK:
+                out.append(f"the reader for {s.get('target')} has not run since {s['scanned_at']}")
+            if s.get("partial_since") and now - datetime.fromisoformat(s["partial_since"]) > STUCK:
+                out.append(
+                    f"a line in {s.get('target')} has waited for its newline since {s['partial_since']}"
+                )
+    except (KeyError, TypeError, ValueError):
+        pass
     return out
 
 
