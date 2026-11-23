@@ -73,7 +73,6 @@ class VolumeModel:
     season: list[float] = field(default_factory=lambda: [0.0] * SLOTS)
     dispersion: float = 0.5  # cautious until learned
     recent: float = 0.0
-    minutes: int = 0
     learned: int = 0
     learning: int = LEARN
     state: str = ""  # "", "drop" or "spike"
@@ -129,10 +128,9 @@ class VolumeModel:
         self.recent += RECENT_RATE * (count - self.season[slot(at)] - self.recent)
         if count and (self.learning or not (low or high)):
             self._learn(count, at)
-        self.minutes += 1
         self.learning = max(self.learning - 1, 0)
 
-        if self.minutes < WARMUP or not self.learned:
+        if self.learned < WARMUP:  # a source that sent a few lines once is not watched
             return None
         watching = not self.learning
         if self.state != "drop" and (silent or watching and self.low_run >= RUN):
@@ -149,6 +147,10 @@ class VolumeModel:
     def rebase(self) -> None:
         """A person says the current volume is normal: take it as the level and learn again."""
         self.level, self.state, self.learning = self.recent, "", LEARN
+        self.pause()
+
+    def pause(self) -> None:
+        """Minutes that can't be judged (the host's logs aren't arriving): runs end unlearned."""
         self.low_run = self.high_run = self.normal_run = 0
         self.quiet, self.quiet_since = 0.0, ""
 

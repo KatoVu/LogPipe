@@ -6,6 +6,7 @@ import pytest
 from scipy import stats
 
 from logpipe.anomaly.volume import LEARN, VolumeModel, tails
+from tests.test_server import env  # noqa: F401 - a fixture
 
 START = datetime(2026, 11, 2, tzinfo=UTC)  # a Monday
 
@@ -104,3 +105,58 @@ def test_state_survives_json():
     run(model, poisson(50, 200))
     copy = VolumeModel.from_dict(json.loads(json.dumps(model.to_dict())))
     assert copy == model
+
+
+def test_server_warns_when_a_source_goes_silent_unless_its_logs_are_held_up(env):  # noqa: F811
+    from logpipe.server.volume import SETTLE, Volume
+
+    server, _, _ = env
+    t0 = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(hours=4)
+    server.volume = Volume(server.control, now=t0)
+    minute = [0]
+
+    def play(lines_per_minute, minutes):
+        for _ in range(minutes):
+            at = t0 + timedelta(minutes=minute[0])
+            server.ingest(
+                [
+                    {"message": f"GET /x {i}", "host": "h1", "service": "api", "source": "app"}
+                    | {"ts": (at + timedelta(seconds=i % 60)).isoformat()}
+                    for i in range(lines_per_minute)
+                ]
+            )
+            minute[0] += 1
+            server.volume.tick(server, now=t0 + timedelta(minutes=minute[0]) + SETTLE)
+        server.inbox.queue.clear()
+
+    def warning(wid):
+        return server.control.get("warning", wid) or {}
+
+    play(20, 80)
+    play(0, 5)
+    w = warning("volume:h1|api|app")
+    assert w["status"] == "open" and w["title"].startswith("No logs from api on h1 for 3 minutes")
+    play(20, 5)
+    assert warning("volume:h1|api|app")["status"] == "resolved"
+
+    now = datetime.now(UTC)
+    status = {
+        "updated_at": now.isoformat(),
+        "sources": [
+            {"target": "/var/log/app.log", "scanned_at": now.isoformat()}
+            | {"partial_since": (now - timedelta(minutes=5)).isoformat()}
+        ],
+    }
+    server.control.put(
+        "agent", "h1", {"hostname": "h1", "last_seen": now.isoformat(), "status": status}
+    )
+    play(0, 10)
+    assert warning("volume:h1|api|app")["status"] == "resolved"
+    w = warning("ingestion:h1")
+    assert w["status"] == "open" and "waited for its newline" in w["detail"]
+
+    server.control.update("agent", "h1", status={"updated_at": now.isoformat()})
+    play(20, 1)
+    assert warning("ingestion:h1")["status"] == "resolved"
+    server.resolve_warning("volume:h1|api|app")  # resolving accepts the volume as normal
+    assert server.volume.models["h1|api|app"].learning > 0

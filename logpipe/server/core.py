@@ -66,6 +66,7 @@ from .metrics import (
     MongoSeries,
 )
 from .stores import reads_for
+from .volume import Volume
 
 if TYPE_CHECKING:
     from ..datadog_api import DatadogSync
@@ -311,6 +312,7 @@ class Server:
             )
         self.metric_rules = MetricRules(control)
         self.drift = Drift()
+        self.volume = Volume(control)
         self._templates_at: tuple[float, int] | None = None
         self.data_dir = data_dir
         self.registry_path = data_dir / "registry.json"
@@ -474,6 +476,7 @@ class Server:
     def ingest(self, events: list[dict]) -> int:
         if self.inbox.qsize() + len(events) > self.inbox.maxsize:
             raise Busy(f"{self.inbox.qsize()} events waiting")
+        counted = []
         for e in events:
             message = str(e.get("message", ""))
             if not message.strip():
@@ -482,17 +485,18 @@ class Server:
                 ts = datetime.fromisoformat(str(e.get("ts", "")))
             except ValueError:
                 ts = None
-            self.inbox.put_nowait(
-                LogEvent(
-                    device_id=str(e.get("host") or "unknown")[:200],
-                    source=str(e.get("source") or "")[:200],
-                    line_no=0,
-                    line=message,
-                    service=str(e.get("service") or "")[:200],
-                    tags=tuple(str(t)[:200] for t in (e.get("tags") or [])[:50]),
-                    time=ts,
-                )
+            event = LogEvent(
+                device_id=str(e.get("host") or "unknown")[:200],
+                source=str(e.get("source") or "")[:200],
+                line_no=0,
+                line=message,
+                service=str(e.get("service") or "")[:200],
+                tags=tuple(str(t)[:200] for t in (e.get("tags") or [])[:50]),
+                time=ts,
             )
+            self.inbox.put_nowait(event)
+            counted.append((source_id(event.device_id, event.service, event.source), ts))
+        self.volume.count(counted)
         return len(events)
 
     def _ingest_loop(self) -> None:
@@ -642,7 +646,7 @@ class Server:
     def _warn(self, kind: str, subject: str, title: str, detail: str, streams: list[str]) -> dict:
         wid = f"{kind}:{subject}"
         doc = self.control.get("warning", wid)
-        if doc is None:
+        if doc is None or doc["status"] != "open":  # a resolved warning that fires again reopens
             doc = {
                 "id": wid,
                 "kind": kind,
@@ -686,8 +690,11 @@ class Server:
         return sorted(out, key=lambda w: (w["status"] != "open", w["first_seen"]), reverse=False)
 
     def resolve_warning(self, wid: str, note: str = "marked resolved") -> dict:
-        if self.control.get("warning", wid) is None:
+        w = self.control.get("warning", wid)
+        if w is None:
             raise KeyError(wid)
+        if w["kind"] == "volume":
+            self.volume.accept(w["subject"])
         return self.control.update(
             "warning", wid, status="resolved", resolution=note, resolved_at=now_iso()
         )
@@ -2145,12 +2152,14 @@ class Server:
                     self.refresh_readiness()
                 if self.dd_sync is not None:
                     self.dd_sync.tick(self)
+                self.volume.tick(self)
             except Exception:
                 LOGGER.exception("housekeeping failed")
 
     def close(self) -> None:
         self._stop.set()
         self.persist()
+        self.volume.save()
         with self.lock:
             self.pipeline.finish()
             if self.pipeline.queue is not None:
