@@ -384,3 +384,31 @@ func TestPruneKeepsCursors(t *testing.T) {
 		t.Fatal("deleted file kept")
 	}
 }
+
+func TestTailReportsScansAndUnterminatedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	src := config.Source{Type: "file", Path: path}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "positions.json")), tr, out)
+	waitStats := func(what string, ok func(Stats) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if ok(tr.Snapshot(src)) {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %s: %+v", what, tr.Snapshot(src))
+	}
+	waitStats("a scan", func(s Stats) bool { return s.ScannedAt != "" && s.PartialSince == "" })
+	appendFile(t, path, "a\npart")
+	collect(t, out, 1)
+	waitStats("the partial line", func(s Stats) bool { return s.PartialSince != "" })
+	appendFile(t, path, "ial\n")
+	collect(t, out, 1)
+	waitStats("the partial to clear", func(s Stats) bool { return s.PartialSince == "" })
+}

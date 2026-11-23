@@ -30,7 +30,8 @@ type tailed struct {
 	id      fileID
 	offset  int64
 	partial []byte
-	head    uint64 // hash of the first headLen bytes, to tell a reused inode from the same file
+	since   time.Time // when partial started waiting for its newline
+	head    uint64    // hash of the first headLen bytes, to tell a reused inode from the same file
 	headLen int
 }
 
@@ -279,6 +280,13 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			}
 		}
 		pos.Prune(glob, matches) // after the loop: a renamed file was looked up by its old name
+		var oldest time.Time
+		for _, t := range open {
+			if len(t.partial) > 0 && (oldest.IsZero() || t.since.Before(oldest)) {
+				oldest = t.since
+			}
+		}
+		tr.Scanned(oldest)
 		first = false
 		select {
 		case <-ctx.Done():
@@ -310,7 +318,7 @@ func (t *tailed) seek(off int64) error {
 		return err
 	}
 	t.r.Reset(t.f)
-	t.offset, t.partial = off, nil
+	t.offset, t.partial, t.since = off, nil, time.Time{}
 	return nil
 }
 
@@ -326,11 +334,14 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 			continue
 		}
 		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			if len(t.partial) > 0 && t.since.IsZero() {
+				t.since = time.Now()
+			}
 			return true // EOF: keep partial for the next poll
 		}
 		line := strings.TrimSuffix(string(t.partial), "\n")
 		t.offset += int64(len(t.partial))
-		t.partial = t.partial[:0]
+		t.partial, t.since = t.partial[:0], time.Time{}
 		tr.Count(line)
 		if !send(ctx, out, Line{Key: path, Text: line, Time: time.Now(), Tags: []string{"filename:" + filepath.Base(path)}}) {
 			return false
