@@ -54,6 +54,9 @@ class Ctx:
     window: int = 20  # LogBERT window length
     use_logbert: bool = True
     use_semantic: bool = True
+    use_hints: bool = True
+    # follow-up kinds the LLM may ask for; None: all of them
+    moves: frozenset[str] | None = None
     ask: AskSettings = field(default_factory=lambda: get_settings().ask)
     rca: RcaSettings = field(default_factory=lambda: get_settings().rca)
 

@@ -369,6 +369,8 @@ VARIANTS: dict[str, dict] = {
     "full": {},
     "no_logbert": {"use_logbert": False},
     "no_semantic": {"use_semantic": False},
+    "no_hints": {"use_hints": False},
+    "no_moves": {"moves": frozenset()},
 }
 
 

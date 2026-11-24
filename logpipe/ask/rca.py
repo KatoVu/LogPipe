@@ -289,10 +289,14 @@ def rca_advance(spec: QuerySpec, raw_state: dict, done: Round, outputs: dict, ct
         assert state.anchor is not None
         anchor = state.anchor
         cands, lines, notes = rank(spec, anchor, done, outputs, ctx)
-        hints = value_hints(
-            rows_of(done, outputs, Around.ERRORS, LogLine),
-            rows_of(done, outputs, Around.OTHERS, LogLine),
-            ctx.rca,
+        hints = (
+            value_hints(
+                rows_of(done, outputs, Around.ERRORS, LogLine),
+                rows_of(done, outputs, Around.OTHERS, LogLine),
+                ctx.rca,
+            )
+            if ctx.use_hints
+            else []
         )
         strong = [c for c in cands if c.score >= ctx.rca.strong]
         if (
@@ -497,7 +501,7 @@ def rank(
 
     near = (
         dict(ctx.neighbours(anchor.template_id, 5))
-        if ctx.use_semantic and anchor.template_id
+        if ctx.use_logbert and anchor.template_id
         else {}
     )
     described = {}
