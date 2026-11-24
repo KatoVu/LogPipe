@@ -74,6 +74,7 @@ class Around(IntEnum):
     ERRORS = 5
     OTHERS = 6
     GRAPH = 7
+    GRAPH_ERRORS = 8
 
 
 def rows_of[M: BaseModel](
@@ -234,18 +235,34 @@ def evidence_round(
                 **span(start, end),
             )
         )
-    if ctx.graph is not None and ctx.use_graph and anchor.service and anchor.kind != "range":
+    if ctx.graph is not None and ctx.use_graph and anchor.kind != "range":
+        # no service at the anchor (a time the user gave): the whole graph, focused once ranked
+        svc = anchor.service
         queries.append(
             local(
                 round_no=n,
                 query_no=Around.GRAPH,
                 tool="graph",
-                title=f"Components around {anchor.service}",
-                why="what it depends on and what depends on it: a cause usually sits below its symptoms",
-                describe=f"graph.around({anchor.service!r}, depth={cfg.graph_depth})",
-                op="around",
-                nodes=[anchor.service],
+                title=f"Components around {svc}" if svc else "The component graph",
+                why="what depends on what: a cause usually sits below its symptoms",
+                describe=f"graph.around({svc!r}, depth={cfg.graph_depth})"
+                if svc
+                else "graph.all()",
+                op="around" if svc else "all",
+                nodes=[svc] if svc else [],
                 depth=cfg.graph_depth,
+            )
+        )
+        queries.append(
+            log_read(
+                ctx,
+                round_no=n,
+                query_no=Around.GRAPH_ERRORS,
+                tool="template_counts",
+                title="Error and warning lines per template around the anchor",
+                why="how each link around the anchor looks: its templates' error/warn lines",
+                filters=f | {"levels": ["error", "warn"]},
+                **span(start, end),
             )
         )
     # hints describe the moment it broke: a widened window would mix in older, unrelated trouble
@@ -529,8 +546,6 @@ def rank(
             if s >= 0.3
         }
 
-    below = depends_on(rows_of(done, outputs, Around.GRAPH, GraphRow), anchor.service)
-
     cands = []
     for c in counts:
         tid = ctx.canonical(c.template_id)
@@ -580,13 +595,6 @@ def rank(
             when_why = f"first seen {_ago(c.first, anchor.at)}"
 
         why = [anomaly_why, rarity_why, when_why]
-        dependency = 1.0
-        hops = below.get(c.service or "")
-        if hops and (c.level in ("error", "warn") or tid in ctx.shutdown) and cfg.graph_weight:
-            dependency = 1 + cfg.graph_weight / hops
-            why.append(
-                f"{anchor.service} depends on {c.service} ({hops} hop{'s' if hops > 1 else ''})"
-            )
         cands.append(
             Candidate(
                 template_id=tid,
@@ -603,13 +611,13 @@ def rank(
                 anomaly=round(anomaly, 3),
                 rarity=round(rarity, 3),
                 proximity=round(proximity, 3),
-                dependency=round(dependency, 3),
-                score=round(anomaly * rarity * proximity * dependency, 4),
+                score=round(anomaly * rarity * proximity, 4),
                 why="; ".join(why),
                 template=ctx.templates.get(tid, "not parsed yet"),
             )
         )
     cands.sort(key=lambda c: (-round(c.score, 2), c.first))
+    lift_dependencies(cands, rows_of(done, outputs, Around.GRAPH, GraphRow), anchor, ctx)
     # precursors: new lines just before the strongest one
     if cands and cands[0].score >= cfg.strong:
         lead = cands[0]
@@ -623,6 +631,8 @@ def rank(
     top = cands[: cfg.max_candidates]
     if top:
         chain = [c for c in top if c.score >= 0.5 * top[0].score]
+        # what the graph puts below the rest of the chain beats a few milliseconds of clock order
+        chain = [c for c in chain if c.dependency > 1] or chain
         min(chain, key=lambda c: c.first).earliest_in_chain = True
 
     evidence: list[Evidence] = []
@@ -700,13 +710,33 @@ def depends_on(edges: list[GraphRow], service: str | None) -> dict[str, int]:
     return hops
 
 
+def lift_dependencies(
+    cands: list[Candidate], edges: list[GraphRow], anchor: Anchor, ctx: Ctx
+) -> None:
+    """Multiply the candidates of what the focus depends on that are errors, warnings or new
+    there by 1 + weight / hops, and sort again. The focus is the anchor's service, else the top
+    error candidate's."""
+    weight = ctx.rca.graph_weight
+    loud = (c for c in cands if c.level in ("error", "warn") or c.template_id in ctx.shutdown)
+    focus = anchor.service or next((c.service for c in loud), None)
+    below = depends_on(edges, focus)
+    if not (weight and below):
+        return
+    for c in cands:
+        hops = below.get(c.service or "")
+        if hops and (c.new or c.level in ("error", "warn") or c.template_id in ctx.shutdown):
+            c.dependency = round(1 + weight / hops, 3)
+            c.score = round(c.score * c.dependency, 4)
+            c.why += f"; {focus} depends on {c.service} ({hops} hop{'s' if hops > 1 else ''})"
+    cands.sort(key=lambda c: (-round(c.score, 2), c.first))
+
+
 def graph_links(edges: list[GraphRow], done: Round, outputs: dict, ctx: Ctx) -> list[GraphLink]:
     """The graph slice as cited refs (G1, ...), each with its templates' lines and errors in the window."""
     per: dict[tuple, list[int]] = defaultdict(lambda: [0, 0])
-    for c in rows_of(done, outputs, Around.TEMPLATES, TemplateCount):
-        n = per[(c.service, ctx.canonical(c.template_id))]
-        n[0] += c.n
-        n[1] += c.n if c.level in ("error", "warn") else 0
+    for i, read in enumerate((Around.TEMPLATES, Around.GRAPH_ERRORS)):
+        for c in rows_of(done, outputs, read, TemplateCount):
+            per[(c.service, ctx.canonical(c.template_id))][i] += c.n
     return [
         GraphLink(
             ref=f"G{i}",

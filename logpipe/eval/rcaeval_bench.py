@@ -39,6 +39,7 @@ from .rca_eval import (
     World,
     _calibrate,
     investigate,
+    learn_graph,
     make_server,
     settle,
     utc_clock,
@@ -70,7 +71,7 @@ def read_logs(path: Path) -> list[tuple[datetime, str, str, str]]:
     return rows
 
 
-def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4):
+def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4, graph_adapter=None):
     """The case's task and a server that has read its logs: calibrated on the lines before the
     fault, then given the rest."""
     from ..sources.file_replay import LogEvent
@@ -102,6 +103,7 @@ def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4):
     _calibrate(server, client)
     send(rows[split:])
     settle(server)
+    learn_graph(server, graph_adapter, end=rows[-1][0] + timedelta(minutes=1))
     return task, World(server, client)
 
 
@@ -405,6 +407,12 @@ def main(argv: list[str] | None = None) -> None:
             }
     if not variants:
         ap.error("no variant left to run")
+    # the graph is labelled by the LLM when there is one, else by the rule baseline
+    graph_llm = (
+        Transcript(llm, logs / f"{args.tasks.name}.graph.llm.jsonl")
+        if args.via == "direct" and (args.llm or args.replay)
+        else None
+    )
     suffix = "" if not args.no_anchor else ".no_anchor"
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {k: out_dir / f"preds.{args.tasks.name}.{k}{suffix}.jsonl" for k in variants}
@@ -431,7 +439,18 @@ def main(argv: list[str] | None = None) -> None:
             started = time.perf_counter()
             task = json.loads((case / "task.json").read_text("utf-8"))
             try:
-                _, world = load_case(case, epochs=args.epochs)
+                if graph_llm is not None:
+                    graph_llm.case = case.name
+                _, world = load_case(case, epochs=args.epochs, graph_adapter=graph_llm)
+                append(
+                    out_dir / f"graphs.{args.tasks.name}.{'llm' if graph_llm else 'rules'}.jsonl",
+                    {
+                        "case_id": case.name,
+                        "services": sorted(world.server.graph.known(world.server)),
+                        "edges": [e.to_dict() for e in world.server.graph.store.edges()],
+                        "stats": world.server.graph.stats,
+                    },
+                )
                 error = None
             # one broken case must not end a long run: it's scored as a miss, retried next run
             except Exception as e:  # noqa: BLE001

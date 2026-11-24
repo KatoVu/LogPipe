@@ -235,6 +235,7 @@ GRAPH_OPS = {
     "upstream": "what depends on {0}",
     "around": "the components around {0}",
     "path": "how {0} and {1} are linked",
+    "all": "every link",
 }
 
 
@@ -246,6 +247,9 @@ def graph_read(ctx: Ctx, op: str, nodes: list[str], depth: int = 2) -> list[dict
         return []
     if op == "path":
         return [e.to_dict() | {"hops": i + 1} for i, e in enumerate(g.path(nodes[0], nodes[1]))]
+    if op == "all":
+        # shortcut: the whole graph, fine for the tens of services it holds; cap it when it grows
+        return [e.to_dict() | {"hops": 0} for e in g.edges()][:60]
     node = nodes[0]
     hops = {node: 0}
     if op in ("downstream", "around"):
@@ -291,6 +295,16 @@ def graph_round(spec: QuerySpec, ctx: Ctx, start: datetime, end: datetime) -> Ro
                 filters={},
                 **span(start, end),
             ),
+            log_read(
+                ctx,
+                round_no=1,
+                query_no=3,
+                tool="template_counts",
+                title="Error and warning lines per template in the range",
+                why="one template can hold both a 200 and a 502: its error/warn lines counted apart",
+                filters={"levels": ["error", "warn"]},
+                **span(start, end),
+            ),
         ],
     )
 
@@ -298,11 +312,10 @@ def graph_round(spec: QuerySpec, ctx: Ctx, start: datetime, end: datetime) -> Ro
 def graph_table(done: Round, outputs: dict, ctx: Ctx) -> TableResult:
     edges = outputs.get(done.queries[0].id) or []
     per: dict[tuple, list[int]] = {}
-    for r in outputs.get(done.queries[1].id) or []:
-        c = TemplateCount.model_validate(r)
-        n = per.setdefault((c.service, ctx.canonical(c.template_id)), [0, 0])
-        n[0] += c.n
-        n[1] += c.n if c.level in ("error", "warn") else 0
+    for i in (0, 1):
+        for r in outputs.get(done.queries[i + 1].id) or []:
+            c = TemplateCount.model_validate(r)
+            per.setdefault((c.service, ctx.canonical(c.template_id)), [0, 0])[i] += c.n
     rows = []
     for e in edges:
         lines = sum(per.get((e["src"], t), [0, 0])[0] for t in e["templates"])

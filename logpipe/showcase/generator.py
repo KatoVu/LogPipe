@@ -233,8 +233,12 @@ class Event:
 
 
 class ShopGenerator:
-    def __init__(self, out: Path, rate: float = 3.0, seed: int = 7):
+    def __init__(self, out: Path, rate: float = 3.0, seed: int = 7, topology: bool = False):
         self.out, self.rate = out, rate
+        # Lines that name what a service talks to, like real ones do (nginx's upstream, the
+        # connection pool's host, the URL a client calls): what the component graph learns from.
+        # Off by default, so recorded evals keep the lines they were recorded on.
+        self.topology = topology
         self.rng = random.Random(seed)
         self.incident_until = 0.0
         self.inventory = False
@@ -257,10 +261,13 @@ class ShopGenerator:
 
     def _nginx(self, now: datetime, method: str, path: str, status: int) -> str:
         r, now = self.rng, now.astimezone()
-        return (
+        line = (
             f"10.0.{r.randint(0, 3)}.{r.randint(2, 254)} - - [{now:%d/%b/%Y:%H:%M:%S %z}] "
             f'"{method} {path} HTTP/1.1" {status} {r.randint(120, 9000)} "-" "{r.choice(AGENTS)}"'
         )
+        if self.topology and path.startswith("/api/"):
+            line += f" upstream=shop-api:8080 rt={r.uniform(0.005, 0.4):.3f}"
+        return line
 
     def _stack(self, error: str, frames: list[str]) -> str:
         return "\n".join([error, *(f"\tat {f}" for f in frames)])
@@ -361,6 +368,18 @@ class ShopGenerator:
             )
         )
         api("INFO", "c.s.order.OrderService", f"order {oid} confirmed for user {user}")
+        if self.topology and self.orders % 25 == 1:
+            api(
+                "INFO",
+                "c.z.h.pool.HikariPool",
+                f"HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@{r.randint(16**5, 16**6 - 1):x} to postgres:5432/shop",
+            )
+        if self.topology and self.inventory:
+            api(
+                "INFO",
+                "c.s.stock.InventoryClient",
+                f"reserving stock via http://inventory:8081/reserve sku={sku} took {r.randint(3, 60)} ms",
+            )
         if self.inventory:
             ev.append(
                 Event(

@@ -380,7 +380,7 @@ def run(
     url = f"http://localhost:{port}"
     api = Api(url)
     procs: list[subprocess.Popen] = []
-    gen = ShopGenerator(ROOT / "logs")
+    gen = ShopGenerator(ROOT / "logs", topology=True)
     try:
         if dd:
             dd.start()
@@ -680,6 +680,7 @@ def _tour(
         ],
     )
     t.pause()
+    _topology_act(t, api)
 
     t.act(
         6,
@@ -812,6 +813,7 @@ def _tour(
             "The shop starts an inventory service with its own log file, and I track it on the agent.",
             f"In {B}Maintenance{R} it first shows as 'collecting lines'; at 200 lines its templates are",
             "drafted on their own and wait for your review there. Approve them and click Add.",
+            f"Then {B}Topology{R} gains shop-api → inventory: the API names the inventory URL it calls.",
         ],
     )
     t.pause("press Enter to start the inventory service")
@@ -900,6 +902,49 @@ def _tour(
 
 
 ASK_QUESTION = "why did the shop break in the last 15 minutes?"
+GRAPH_QUESTION = "what breaks if postgres fails?"
+
+
+def _topology_act(t: Tour, api: Api) -> None:
+    """The component graph learned with the templates, and a dependency question it answers."""
+    t.act(
+        "5b",
+        "Which service depends on which",
+        [
+            "When the templates were drafted, the LLM (or, without one, a rule) also read which other",
+            "service each template names: nginx's upstream, the API's connection pool to postgres:5432.",
+            f"{B}Topology{R} draws those links. Click {B}postgres{R}: what breaks if it fails is outlined in red.",
+            f"Click a link to see the templates it was learned from. Ask answers {B}{GRAPH_QUESTION}{R}",
+            "from the graph, without reading any log line.",
+        ],
+    )
+    t.wait(
+        "the first links",
+        lambda: bool(api("/api/graph")["edges"]),
+        lambda: t.show("/topology"),
+        timeout=120,
+        give_up="no links yet: the templates are labelled a few seconds after they're applied.",
+    )
+    for e in api("/api/graph")["edges"]:
+        t.say(
+            f"{e['src']} {e['relation'].replace('_', ' ')} {e['dst']}  (learned by {e['by']})", G, 4
+        )
+    plan = api("/api/ask", {"question": GRAPH_QUESTION})
+    for _ in range(30):
+        plan = api(f"/api/ask/{plan['id']}")
+        if plan["status"] == "waiting_approval":
+            api(f"/api/ask/{plan['id']}/approve", {})
+        elif plan["status"] in ("done", "failed", "rejected", "expired"):
+            break
+        time.sleep(1)
+    rows = (plan.get("result") or {}).get("rows") or []
+    t.say(
+        f"{GRAPH_QUESTION} -> "
+        + (", ".join(sorted({r[0] for r in rows})) or "nothing recorded yet"),
+        G,
+        2,
+    )
+    t.pause()
 
 
 def _ask_act(t: Tour, api: Api) -> None:

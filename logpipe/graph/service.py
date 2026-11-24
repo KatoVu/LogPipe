@@ -24,7 +24,10 @@ from datetime import UTC, datetime, timedelta
 from .label import RELATIONS, prompt_for, propose, resolve
 from .store import Edge, GraphStore
 
-LABELLED_WITHIN = timedelta(days=1)  # templates seen this recently get labelled by tick
+LABELLED_WITHIN = timedelta(days=1)
+ERRORS = [
+    {"field": "level", "op": "in", "value": "error,warn"}
+]  # templates seen this recently get labelled by tick
 
 
 def health(lines: int, errors: int) -> str:
@@ -151,11 +154,13 @@ class GraphService:
         self.store.replace(edges)
         return edges
 
-    def label_new(self, server, adapter, now: datetime | None = None) -> int:
-        """Label the (service, template) pairs logged in the last day that have none yet."""
-        now = now or datetime.now(UTC)
+    def label_new(self, server, adapter, end: datetime | None = None, force: bool = False) -> int:
+        """Label the (service, template) pairs logged in the day before ``end`` (default: now)
+        that have none yet (every one with ``force``: the benchmark compares labellers on the
+        same templates)."""
+        now = end or datetime.now(UTC)
         snap = server.registry.current
-        done = {d["id"] for d in self.control.all("graph_label")}
+        done = set() if force else {d["id"] for d in self.control.all("graph_label")}
         reads = server.reads
         rows = reads.records(reads.compiler.template_counts([], now - LABELLED_WITHIN, now), 20_000)
         todo: dict[str, dict[int, str]] = defaultdict(dict)
@@ -187,18 +192,16 @@ class GraphService:
     def view(self, server, start: datetime, end: datetime) -> dict:
         """Nodes and edges with their health over [start, end)."""
         reads = server.reads
-        rows = reads.records(reads.compiler.template_counts([], start, end), 20_000)
         canonical = server.registry.current.canonical_id
         per: dict[tuple[str, int], list[int]] = defaultdict(lambda: [0, 0])
         svc: dict[str, list[int]] = defaultdict(lambda: [0, 0])
-        for r in rows:
-            n, bad = int(r.get("n") or 0), r.get("level") in ("error", "warn")
-            key = (r.get("service") or "", canonical(int(r.get("template_id") or 0)))
-            per[key][0] += n
-            svc[key[0]][0] += n
-            if bad:
-                per[key][1] += n
-                svc[key[0]][1] += n
+        # every line, then the error/warn ones: one template holds both a 200 and a 502
+        for i, filters in enumerate(([], ERRORS)):
+            for r in reads.records(reads.compiler.template_counts(filters, start, end), 20_000):
+                n = int(r.get("n") or 0)
+                key = (r.get("service") or "", canonical(int(r.get("template_id") or 0)))
+                per[key][i] += n
+                svc[key[0]][i] += n
         edges = []
         for e in self.store.edges():
             lines = sum(per[(e.src, t)][0] for t in e.templates)
