@@ -19,6 +19,7 @@ import StatsPage from "./pages/Stats";
 import Streams from "./pages/Streams";
 import SystemPage from "./pages/System";
 import Templates from "./pages/Templates";
+import Topology from "./pages/Topology";
 import Maintenance from "./pages/Maintenance";
 import ReviewPage from "./pages/Review";
 
@@ -32,6 +33,7 @@ const paths: Record<string, string> = {
   alerts: "M12 9v4m0 4h.01M10.3 3.9L2.4 17.5A2 2 0 004.1 20.5h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",
   warnings: "M12 8v5m0 3h.01M12 3a9 9 0 100 18 9 9 0 000-18z",
   streams: "M4 7h10m-10 5h16M4 17h7",
+  topology: "M6 6a2 2 0 100 .01M18 6a2 2 0 100 .01M12 18a2 2 0 100 .01M7.5 7.5l3.5 9M16.5 7.5l-3.5 9M8 6h8",
   agents: "M5 6h14v8H5zM9 18h6m-3-4v4",
   bench: "M12 14l4-4M4 18a8 8 0 1116 0",
   jobs: "M12 7v5l3 3M12 3a9 9 0 100 18 9 9 0 000-18z",
@@ -126,6 +128,7 @@ export default function App() {
         <Item to="/templates" icon="templates">Templates</Item>
         <Item to="/query" icon="query">Query</Item>
         <Item to="/stats" icon="stats">Analytics</Item>
+        <Item to="/topology" icon="topology">Topology</Item>
         <div className="nav-group">Detection</div>
         <Item to="/alerts" icon="alerts" count={note.openIncidents}>Anomaly alerts</Item>
         <Item to="/maintenance" icon="warnings" count={todo}>Maintenance</Item>
@@ -148,6 +151,7 @@ export default function App() {
           <Route path="/templates" element={<Templates />} />
           <Route path="/query" element={<Query />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/topology" element={<Topology />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/alerts/:id" element={<IncidentPage />} />
           <Route path="/maintenance" element={<Maintenance />} />
