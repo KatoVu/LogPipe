@@ -13,10 +13,10 @@ ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON_DOWNLOADS=never \
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY DeepParse DeepParse
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra graph --no-install-project
 COPY logpipe logpipe
 COPY --from=web /src/logpipe/server/static logpipe/server/static
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra graph
 VOLUME /app/artifacts
 EXPOSE 8080
 CMD ["logpipe", "server", "--host", "0.0.0.0", "--port", "8080", "--store", "clickhouse"]

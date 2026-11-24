@@ -70,6 +70,26 @@ class MongoSettings(BaseSettings):
     readonly_uri: str | None = None  # free-form pipelines run with this connection when set
 
 
+class Neo4jSettings(BaseSettings):
+    """The component graph's store; without ``NEO4J_URI`` it's kept in memory (and rebuilt from
+    the template labels in the control store on start)."""
+
+    model_config = _env("NEO4J_")
+    uri: str | None = None
+    user: str = "neo4j"
+    password: str = ""
+
+
+class GraphSettings(BaseSettings):
+    model_config = _env("LOGPIPE_GRAPH_")
+    enabled: bool = True
+    batch: int = 40  # new templates of one stream per labelling call
+    upstream_weight: float = (
+        0.8  # RCA: anomaly floor for an error on a component the anchor depends on
+    )
+    slice_depth: int = 2  # hops around the anchor's service the RCA bundle carries
+
+
 class KafkaSettings(BaseSettings):
     model_config = _env("KAFKA_")
     bootstrap: str = "127.0.0.1:9092"
@@ -241,6 +261,8 @@ class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     ask: AskSettings = Field(default_factory=AskSettings)
     rca: RcaSettings = Field(default_factory=RcaSettings)
+    neo4j: Neo4jSettings = Field(default_factory=Neo4jSettings)
+    graph: GraphSettings = Field(default_factory=GraphSettings)
     datadog: DatadogSettings = Field(default_factory=DatadogSettings)
 
 

@@ -9,6 +9,7 @@ import uuid
 import zlib
 from collections import Counter
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -920,6 +921,33 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
     @app.post("/api/warnings/{wid}/recalibrate", status_code=202)
     def recalibrate(wid: str) -> dict:
         return server.recalibrate_warning(wid)
+
+    @app.get("/api/graph")
+    def graph(minutes: int = 60) -> dict:
+        end = datetime.now(UTC)
+        view = server.graph.view(server, end - timedelta(minutes=clamp(minutes)), end)
+        texts = server.ask.catalog().templates
+        for e in view["edges"]:
+            e["evidence"] = [{"id": t, "text": texts.get(t, "")} for t in e["templates"]]
+        return view
+
+    @app.post("/api/graph/edges")
+    def graph_add(body: Annotated[dict, Body()]) -> dict:
+        server.graph.edit(
+            str(body.get("src") or ""),
+            str(body.get("dst") or ""),
+            str(body.get("relation") or "depends_on"),
+            removed=False,
+        )
+        server.graph.rebuild(server)
+        return {"ok": True}
+
+    @app.delete("/api/graph/edges/{edge_id}")
+    def graph_remove(edge_id: str) -> dict:
+        src, dst, relation = (edge_id.split(">") + ["", "", ""])[:3]
+        server.graph.edit(src, dst, relation, removed=True)
+        server.graph.rebuild(server)
+        return {"ok": True}
 
     @app.get("/api/bench")
     def bench_runs() -> dict:

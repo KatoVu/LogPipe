@@ -3,6 +3,7 @@ edits, merges or rejects them. Only approved drafts reach the parser."""
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 
 from deepparse.masks_types import Mask
@@ -21,17 +22,25 @@ def _parser(templates: Sequence[NewTemplate], masks: Sequence[Mask]) -> FrozenPa
 
 
 def draft_docs(
-    batch_id: str, templates: Sequence[NewTemplate], masks: Sequence[Mask], lines: Sequence[str]
+    batch_id: str,
+    templates: Sequence[NewTemplate],
+    masks: Sequence[Mask],
+    lines: Sequence[str],
+    services: Sequence[str] = (),
 ) -> list[dict]:
-    """One draft per template, with how many sample lines it matches and a few of them."""
+    """One draft per template, with how many sample lines it matches, a few of them, and the
+    services they came from (``services`` runs alongside ``lines``), most lines first."""
     parser = _parser(templates, masks)
     counts = [0] * len(templates)
     samples: list[list[str]] = [[] for _ in templates]
-    for line in lines:
+    seen: list[Counter] = [Counter() for _ in templates]
+    for j, line in enumerate(lines):
         result = parser.parse(line)
         if result.status == Status.FINAL:
             i = result.template_id - FIRST_TEMPLATE_ID
             counts[i] += 1
+            if j < len(services) and services[j]:
+                seen[i][services[j]] += 1
             if len(samples[i]) < get_settings().server.review_samples:
                 samples[i].append(line)
     return [
@@ -46,6 +55,8 @@ def draft_docs(
             "rule": rule_from_template(t.tokens, t.keys),
             "rule_edited": False,
             "mined": {"tokens": list(t.tokens), "keys": list(t.keys)},
+            "services": [s for s, _ in seen[i].most_common()],
+            "edges": [],
         }
         for i, t in enumerate(templates)
     ]

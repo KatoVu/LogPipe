@@ -106,6 +106,10 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # The component graph: unset keeps it in memory; `--profile graph` starts Neo4j below.
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-logpipe-graph}
       # Accepted as an agent API key, so the compose agent can ship before you create keys in the UI.
       LOGPIPE_BOOTSTRAP_KEY: ${LOGPIPE_BOOTSTRAP_KEY:-lp_compose_demo_key}
       # UI login. Unset: generated on first start and printed (`docker compose logs server`).
@@ -135,6 +139,10 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # The component graph: unset keeps it in memory; `--profile graph` starts Neo4j below.
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-logpipe-graph}
       LOGPIPE_BOOTSTRAP_KEY: ${LOGPIPE_BOOTSTRAP_KEY:-lp_compose_demo_key}
       LOGPIPE_ADMIN_PASSWORD: ${LOGPIPE_ADMIN_PASSWORD:-}
     ports:
@@ -146,6 +154,24 @@ services:
         condition: service_healthy
 
   # Writes a live app log (with Java stack traces) and an nginx access log for the agent to tail.
+  # The component graph (Topology page). Point the server at it: NEO4J_URI=bolt://neo4j:7687.
+  neo4j:
+    profiles: [graph]
+    image: neo4j:5.26-community
+    container_name: logpipe_neo4j
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-logpipe-graph}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   loggen:
     profiles: [platform]
     image: python:3.13-alpine
@@ -206,3 +232,4 @@ volumes:
   server_data:
   demo_logs:
   agent_data:
+  neo4j_data:

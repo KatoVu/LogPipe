@@ -28,6 +28,9 @@ dependencies = [
 logpipe = "logpipe.cli:main"
 
 [project.optional-dependencies]
+graph = [
+    "neo4j>=5.28",
+]
 datadog = [
     "datadog>=0.56.0",
     "ddtrace>=4.16.3",
