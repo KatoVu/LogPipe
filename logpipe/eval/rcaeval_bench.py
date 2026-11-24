@@ -71,7 +71,9 @@ def read_logs(path: Path) -> list[tuple[datetime, str, str, str]]:
     return rows
 
 
-def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4, graph_adapter=None):
+def load_case(
+    case_dir: Path, adapter_factory=None, epochs: int = 4, graph_adapter=None, true_links=False
+):
     """The case's task and a server that has read its logs: calibrated on the lines before the
     fault, then given the rest."""
     from ..sources.file_replay import LogEvent
@@ -104,6 +106,14 @@ def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4, graph_adapt
     send(rows[split:])
     settle(server)
     learn_graph(server, graph_adapter, end=rows[-1][0] + timedelta(minutes=1))
+    if true_links:  # as if someone entered Online Boutique's architecture on the Topology page
+        from .graph_eval import OB_TRUTH
+
+        known = server.graph.known(server)
+        for a, b in OB_TRUTH:
+            if a in known and b in known:
+                server.graph.edit(a, b, "depends_on", removed=False)
+        server.graph.rebuild(server)
     return task, World(server, client)
 
 
@@ -365,6 +375,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--variants", nargs="*", help="default: full, no_logbert, no_semantic (direct)")
     ap.add_argument("--no-anchor", action="store_true", help="don't tell the RCA when it broke")
     ap.add_argument("--epochs", type=int, default=4)
+    ap.add_argument(
+        "--true-links",
+        action="store_true",
+        help="add Online Boutique's real links by hand on top of the learned ones",
+    )
     ap.add_argument("--llm", help="direct: llm:<provider>[:<model>] for the router and synthesizer")
     ap.add_argument(
         "--record",
@@ -441,7 +456,9 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 if graph_llm is not None:
                     graph_llm.case = case.name
-                _, world = load_case(case, epochs=args.epochs, graph_adapter=graph_llm)
+                _, world = load_case(
+                    case, epochs=args.epochs, graph_adapter=graph_llm, true_links=args.true_links
+                )
                 append(
                     out_dir / f"graphs.{args.tasks.name}.{'llm' if graph_llm else 'rules'}.jsonl",
                     {

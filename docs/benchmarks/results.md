@@ -163,11 +163,27 @@ graph it moves from unranked to second lead, behind the shop-api error it explai
 | RCA prompt, graph slice | ~120 tokens (2 links), ~480 (15 links, Online Boutique) |
 | per line at ingest | nothing: labels are per template |
 
+**RCA on RE3-OB** (`logpipe eval rcaeval`, 30 cases, rules only):
+
+| graph | links learned (of 11) | AC@1 | AC@3 | Avg@5 |
+|---|---|---|---|---|
+| off | — | 0.40 | 0.40 | 0.56 |
+| learned from the logs (rules) | 0 | 0.40 | 0.40 | 0.56 |
+| learned from the logs (Gemini, 1 case: 6 calls, ~2.2k tokens, 70 s) | 0 | — | — | — |
+| true links entered by hand (`--true-links`), factor on | 11 | 0.40 | 0.40 | 0.56 |
+| true links, factor off (in the bundle only) | 11 | 0.40 | 0.40 | 0.56 |
+
+Online Boutique's services never name the one they call ("payment went through", "request
+started"), so neither labeller finds a link; Gemini proposes none rather than guessing. Its
+topology is in the traces, not the logs. With the true links entered by hand, the factor
+reorders lower ranks in 15 cases but never changes the top answer: the root cause is
+`emailservice` in 15 cases, and its lines during these faults are its usual info lines, not an
+error, a warning or a new template, so there's nothing on it to lift.
+
 **Caveats.** The shop is small and names its backends plainly, so the rule baseline is already
-perfect there; the real test is RCAEval (Online Boutique logs, 15 true links), where Gemini's
-`emailservice` misses (rules rank its caller `checkoutservice` first) are what the ranking factor
-targets. The LLM-only baseline's prompt carries wall-clock timestamps, so it can't be replayed;
-it was recorded once.
+perfect there; on RE3-OB nothing is learnable from logs. The graph's measured gains are the
+dependency questions; RCA showed no gain on either set. The LLM-only baseline's prompt carries
+wall-clock timestamps, so it can't be replayed; it was recorded once.
 
 ## Nightly gate baseline
 

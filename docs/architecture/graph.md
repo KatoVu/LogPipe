@@ -87,6 +87,8 @@ read is a fixed, parameterised Cypher statement (`graph/store.py`); the LLM neve
 - A dependency no log line names is invisible: nginx shows its backend only if its log format
   has `$upstream_addr`. Add it by hand on the Topology page.
 - Links end at known services only; an external API (a payment gateway) is dropped.
+- Services whose logs never name a callee (Online Boutique) get no links at all; their
+  topology lives in traces.
 - `graph.all()` reads the whole graph when the anchor has no service; fine for tens of services,
   capped at 60 links.
 

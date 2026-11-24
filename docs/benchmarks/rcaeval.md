@@ -90,6 +90,11 @@ reports. The runs used a Claude Code login, not an API key.
    normal logs to train LogBERT on, and the question names a time but no service, so the
    LogBERT surprise and neighbour factors rarely apply.
 5. **F1 is the hard type for everyone**, the only one where Claude Code stays below 0.7.
+6. **The component graph doesn't help here** (run 2026-11-25, rules only). No link is learnable:
+   the logs never name a callee. Even with the 11 true links entered by hand (`--true-links`)
+   AC@1 stays 0.40, factor on or off: the lift applies to errors, warnings and new templates on a
+   dependency, and the faulty `emailservice` logs none of those.
+   [Component graph results](results.md#component-graph).
 
 !!! warning "Caveats"
     - Every run above predates `settle()` (`c615e33`): cases were enriched with a fixed 3 learner
