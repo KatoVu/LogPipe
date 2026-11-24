@@ -128,6 +128,47 @@ this is a fit, not a held-out score. That's why the RCAEval results below matter
 | Claude Code over MCP, with `ask` | 0.87 | 0.87 | 0.88 |
 | Claude Code over MCP, raw tools | 0.90 | 0.90 | 0.90 |
 
+## Component graph
+
+`logpipe eval graph`, run 2026-11-25 ([how it works](../architecture/graph.md)). The shop with
+`--topology` traffic (nginx logs its upstream, the API its connection pool), three faults
+injected, 16 templates. Truth: nginx → shop-api → postgres.
+
+**Links learned**
+
+| labeller | precision | recall | LLM calls | prompt tokens | labelling time |
+|---|---|---|---|---|---|
+| rules (a template names a known service) | 1.0 | 1.0 | 0 | 0 | < 1 ms |
+| Gemini (web chat, one call per stream) | 1.0 | 1.0 | 3 | ~1.9k | 54 s |
+
+**Dependency questions**: "what breaks if X fails?" and "what does X depend on?" for each of
+the 3 services (6 questions), set F1 against the true answer:
+
+| | F1 |
+|---|---|
+| Ask without the graph | 0.33 (it can't answer; right only where the answer is "nothing") |
+| Gemini alone, reading the last 200 lines | 0.44 |
+| **Ask with the graph** (no LLM at question time) | **1.0** |
+
+**RCA, synthetic** (`logpipe eval rca --topology`, 19 faults, rules only): graph on, off, or in
+the bundle without the ranking factor all score evidence recall 1.0 and answer 0.947 (18/19), so
+no regression, and no room: the miss (`trace_hop`) is an info-level Postgres line. With the
+graph it moves from unranked to second lead, behind the shop-api error it explains.
+
+**Cost**
+
+| | |
+|---|---|
+| graph query (upstream + downstream, depth 6) | memory p50 0.003 ms; Neo4j p50 4.4 ms, p99 19 ms (2 links); 3.4 / 10 ms (15 links) |
+| RCA prompt, graph slice | ~120 tokens (2 links), ~480 (15 links, Online Boutique) |
+| per line at ingest | nothing: labels are per template |
+
+**Caveats.** The shop is small and names its backends plainly, so the rule baseline is already
+perfect there; the real test is RCAEval (Online Boutique logs, 15 true links), where Gemini's
+`emailservice` misses (rules rank its caller `checkoutservice` first) are what the ranking factor
+targets. The LLM-only baseline's prompt carries wall-clock timestamps, so it can't be replayed;
+it was recorded once.
+
 ## Nightly gate baseline
 
 `eval/baseline.json`: reduced settings (`--no-tune`; IoT with 3 epochs, 3 devices, 2 h) so CI

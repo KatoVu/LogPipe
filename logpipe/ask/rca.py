@@ -12,12 +12,14 @@ Anchor, in priority order (the first that holds wins; none -> ask the user, neve
 Window: [anchor - 30 min, anchor + 2 min], widened once to [anchor - 2 h, anchor + 5 min] when
 fewer than 3 candidates stand out.
 
-Score per (template, service) seen in the window = anomaly x rarity x proximity:
+Score per (template, service) seen in the window = anomaly x rarity x proximity x dependency:
 * anomaly: the largest of the line's level (error 0.8, warn 0.5, else 0.1), 0.9 for a shutdown
   template, and the share of its lines LogBERT did not expect (unseen or mispredicted);
 * rarity: 1 for a template absent from the 24 h baseline, else how far its count in the window
   exceeds the baseline median for a window that long ((ratio - 1) / 9, clamped to 0.02..1);
 * proximity: exp(-|first seen - anchor| / 10 min).
+* dependency: 1 + graph_weight / hops for an error, warning or new template on a service the
+  anchor's service depends on (the component graph); else 1.
 Ties go to the earlier template: a cause comes before its effects. A new template first seen up to
 2 minutes before the strongest one gets anomaly 0.8 (a precursor), and the earliest template
 scoring at least half the best leads the answer ("earliest in chain").

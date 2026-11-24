@@ -31,6 +31,7 @@ flowchart TD
 | `rca` | "why did checkout fail around 14:05?" | a root-cause report |
 | `summary` | "what happened on db-1 today?" | a report over the whole range |
 | `general` | "what is a 502?" | a short answer labelled *not from your logs* |
+| `graph` | "what breaks if postgres fails?" | the links from the [component graph](graph.md), with their health |
 
 ### Safety model
 
@@ -84,7 +85,7 @@ history.
 ### 3. Score each (template, service) in the window
 
 ```
-score = anomaly × rarity × proximity
+score = anomaly × rarity × proximity × dependency
 ```
 
 | Factor | Value |
@@ -92,6 +93,7 @@ score = anomaly × rarity × proximity
 | **anomaly** | the largest of: level (error 0.8, warn 0.5, else 0.1); 0.9 for a shutdown template; the share of its lines LogBERT didn't expect; 0.5 if it's a LogBERT neighbour of the anchor or matches the question's words |
 | **rarity** | 1.0 if absent from the baseline (new); else `(count / expected − 1) / 9`, clamped to 0.02…1; 0.5 when the store has no history at all |
 | **proximity** | `exp(−|first seen − anchor| / 10 min)` |
+| **dependency** | `1 + graph_weight / hops` for an error, warning or new template on a service the anchor's service depends on ([component graph](graph.md)); else 1 |
 
 Ties go to the earlier template: a cause comes before its effects. A new template first seen
 up to 2 minutes before the strongest one is lifted to anomaly 0.8 (a **precursor**), and the
@@ -121,6 +123,7 @@ The LLM may also ask for **typed follow-up moves** (`ask/moves.py`), never SQL:
 | `trace` | an id copied from the bundle, across every service | the id must occur in the bundle |
 | `rate` | error or all lines per service per step (cited `S1…`) | known services |
 | `neighbours` | errors in any service near the anchor | — |
+| `graph` | the component graph upstream, downstream or the path between two services | services the graph knows |
 
 Up to 3 moves a round and 4 follow-up rounds, covered by the approval of the first round.
 
