@@ -84,10 +84,6 @@ class GraphSettings(BaseSettings):
     model_config = _env("LOGPIPE_GRAPH_")
     enabled: bool = True
     batch: int = 40  # new templates of one stream per labelling call
-    upstream_weight: float = (
-        0.8  # RCA: anomaly floor for an error on a component the anchor depends on
-    )
-    slice_depth: int = 2  # hops around the anchor's service the RCA bundle carries
 
 
 class KafkaSettings(BaseSettings):
@@ -190,6 +186,10 @@ class RcaSettings(BaseSettings):
     moves_per_round: int = 3
     move_max_hours: float = 24  # how far before the anchor a follow-up read may look
     follow_up_lines: int = 20  # lines one follow-up round may add to the bundle
+    # component graph: an error/warn template on a service the anchor's service depends on is
+    # multiplied by 1 + graph_weight / hops (a cause sits below its symptoms); 0 turns it off
+    graph_weight: float = 1.0
+    graph_depth: int = 2  # hops around the anchor's service the bundle's graph slice covers
     # value hints: a host or extracted value carried by error lines far more often than by the others
     hint_min_ratio: float = 3.0  # share among errors / share among the other lines
     hint_min_share: float = 0.2  # of the error lines

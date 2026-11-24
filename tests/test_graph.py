@@ -171,3 +171,38 @@ def test_server_drafts_carry_edges_and_approving_publishes_them(env):  # noqa: F
     server.graph.tick(server)
     (edge,) = server.graph.store.edges()
     assert len(edge.templates) == 2
+
+
+def test_depends_on_follows_edges_down_from_the_service():
+    from logpipe.ask.rca import GraphRow, depends_on
+
+    rows = [
+        GraphRow(src="nginx", dst="api"),
+        GraphRow(src="api", dst="db"),
+        GraphRow(src="worker", dst="db"),
+    ]
+    assert depends_on(rows, "nginx") == {"api": 1, "db": 2}
+    assert depends_on(rows, "db") == {}
+    assert depends_on(rows, None) == {}
+
+
+def test_dependency_questions_are_answered_from_the_graph(env):  # noqa: F811
+    from logpipe.ask.engine import run_unattended
+    from logpipe.ask.router import route
+
+    server, client, headers = env
+    api, db = shop_lines(120)
+    send(server, client, headers, events(db, service="postgres", host="db-1"))
+    calibrated(server, client, headers, api)
+
+    spec = route("what breaks if postgres goes down?", server.ask.catalog(), server.adapter).spec
+    assert (spec.intent, spec.graph_op, spec.services) == ("graph", "impact", ["postgres"])
+    out = run_unattended(spec, server.ask.ctx())
+    table = out
+    assert table["kind"] == "table"
+    assert table["columns"][:4] == ["from", "relation", "to", "hops"]
+    assert [r[:4] for r in table["rows"]] == [["api", "depends_on", "postgres", 1]]
+    assert out["rounds"][0]["queries"][0]["compiled"] == "graph.upstream('postgres', depth=6)"
+
+    no_graph = run_unattended(spec, server.ask.ctx(use_graph=False))
+    assert no_graph["kind"] == "clarify"

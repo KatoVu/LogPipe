@@ -22,8 +22,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from .engine import Ctx, Round, log_read, span
-from .models import Bucket, LogLine, Report, Series, TemplateCount
+from .engine import Ctx, Round, local, log_read, span
+from .models import Bucket, GraphLink, LogLine, Report, Series, TemplateCount
 from .query import Filters, Query
 
 
@@ -32,6 +32,7 @@ class MoveKind(StrEnum):
     TRACE = "trace"
     RATE = "rate"
     NEIGHBOURS = "neighbours"
+    GRAPH = "graph"
 
 
 class MoveRequest(BaseModel):
@@ -41,7 +42,8 @@ class MoveRequest(BaseModel):
         description=(
             "lines: keyword search in some services; trace: every line in any service carrying "
             "an id; rate: error/warn lines per service over time; neighbours: errors in any "
-            "service around the anchor"
+            "service around the anchor; graph: the component graph around services "
+            "(value upstream, downstream or path)"
         )
     )
     why: str = Field("", description="what this read would settle")
@@ -74,6 +76,7 @@ DEFAULT_WINDOW: dict[MoveKind, tuple[float, float] | None] = {
     MoveKind.TRACE: None,
     MoveKind.RATE: None,
     MoveKind.NEIGHBOURS: (5, 2),
+    MoveKind.GRAPH: (0, 0),
 }
 
 
@@ -97,6 +100,7 @@ class Move:
             MoveKind.RATE: f"{'all' if self.all_lines else 'error/warn'} lines per minute of "
             + ", ".join(self.services),
             MoveKind.NEIGHBOURS: "errors in any service around the anchor",
+            MoveKind.GRAPH: f"component graph: {self.value} of {' and '.join(self.services)}",
         }[self.kind]
         return f"{what}, {self.start:%H:%M}-{self.end:%H:%M} UTC"
 
@@ -122,6 +126,16 @@ def check_moves(requests: list[MoveRequest], report: Report, ctx: Ctx) -> list[M
         if r.kind == MoveKind.LINES and not (keywords or services):
             continue
         if r.kind == MoveKind.RATE and not services:
+            continue
+        if r.kind == MoveKind.GRAPH:
+            op = value if value in ("upstream", "downstream", "path") else "around"
+            if ctx.graph is None or not ctx.use_graph or len(services) < (2 if op == "path" else 1):
+                continue
+            key = (r.kind, op, tuple(services[:2]))
+            if key not in seen:
+                seen.add(key)
+                at = report.anchor.at
+                out.append(Move(r.kind, Filters(), at, at, r.why[:200], op, False, services[:2]))
             continue
         default = DEFAULT_WINDOW[r.kind] or (cfg.wide_before_minutes, cfg.wide_after_minutes)
         before = min(max(r.minutes_before, 0) or default[0], longest)
@@ -157,7 +171,22 @@ def move_round(n: int, moves: list[Move], ctx: Ctx, purpose: str) -> Round:
     for i, m in enumerate(moves, 1):
         args = {"filters": asdict(m.filters), "move": m.kind, **span(m.start, m.end)}
         title, why = f"Follow-up ({m.kind}): {m.describe()}", m.why or "the model asked for this"
-        if m.kind in (MoveKind.LINES, MoveKind.TRACE):
+        if m.kind == MoveKind.GRAPH:
+            queries.append(
+                local(
+                    round_no=n,
+                    query_no=i,
+                    tool="graph",
+                    title=title,
+                    why=why,
+                    describe=f"graph.{m.value}({', '.join(map(repr, m.services))}, depth=3)",
+                    op=m.value,
+                    nodes=m.services,
+                    depth=3,
+                    move=m.kind,
+                )
+            )
+        elif m.kind in (MoveKind.LINES, MoveKind.TRACE):
             queries.append(
                 log_read(
                     ctx,
@@ -221,7 +250,25 @@ def absorb(report: Report, done: Round, outputs: dict[str, list[dict]], ctx: Ctx
             continue
         rows, kind = outputs[q.id], MoveKind(q.args.get("move", MoveKind.LINES))
         why = f"follow-up {kind}: {q.why}"
-        if q.tool == "rows":
+        if q.tool == "graph":
+            from .rca import GraphRow
+
+            have = {(g.src, g.dst, g.relation) for g in report.graph}
+            for e in (GraphRow.model_validate(r) for r in rows):
+                if (e.src, e.dst, e.relation) not in have:
+                    have.add((e.src, e.dst, e.relation))
+                    report.graph.append(
+                        GraphLink(
+                            ref=f"G{len(report.graph) + 1}",
+                            src=e.src,
+                            dst=e.dst,
+                            relation=e.relation,
+                            status=e.status,
+                            templates=e.templates,
+                            by=e.by,
+                        )
+                    )
+        elif q.tool == "rows":
             report.evidence = add_lines(
                 report.evidence,
                 varied([LogLine.model_validate(r) for r in rows]),

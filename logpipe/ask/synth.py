@@ -83,7 +83,7 @@ Ranked templates (score = anomaly x rarity x proximity):
 
 Value hints (share of error/warn lines vs the other lines in the window):
 {hints}
-{series}
+{graph}{series}
 Lines (chronological):
 {lines}"""
 
@@ -138,6 +138,24 @@ def series_text(report: Report) -> str:
     return "\nRates (follow-up reads):\n" + "\n".join(rows) + "\n"
 
 
+def graph_text(report: Report) -> str:
+    """The component graph around the anchor (empty without one, so the prompt is unchanged)."""
+    if not report.graph:
+        return ""
+    rows = [
+        f"{g.ref} {g.src} {g.relation} {g.dst}"
+        + (f" [{', '.join(g.status)}]" if g.status else "")
+        + f" | its templates: {g.lines} lines, {g.errors} error/warn in the window"
+        for g in report.graph
+    ]
+    return (
+        "\nComponent graph (learned from the templates; cite G<n>). A failure in what a service "
+        "depends on shows up in the service first, so look below the loudest errors. To see more "
+        "of it, follow_up kind graph with services [name] and value upstream, downstream, or "
+        "path (two services):\n" + "\n".join(rows) + "\n"
+    )
+
+
 def _line(e) -> str:
     return (
         f"{e.ref} {e.timestamp.astimezone(UTC).isoformat(timespec='milliseconds')[:23]}Z {e.service or '-'} {e.host or '-'} "
@@ -145,7 +163,7 @@ def _line(e) -> str:
     )
 
 
-REF = re.compile(r"^([LTHS]\d+)$")
+REF = re.compile(r"^([LTHSG]\d+)$")
 
 
 def _valid(cites: list[str], refs: set[str]) -> list[str]:
@@ -290,6 +308,7 @@ def synthesize(spec: QuerySpec, report: Report, ctx: Ctx) -> tuple[Answer, list[
         lines=lines,
         hints=hints_text(report),
         series=series_text(report),
+        graph=graph_text(report),
     )
     try:
         out = ctx.adapter.ask(AnswerOut, prompt)

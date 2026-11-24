@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..settings import RcaSettings
 from ..showcase.generator import FAULTS, FILES, ShopGenerator
 
 if TYPE_CHECKING:
@@ -371,6 +372,9 @@ VARIANTS: dict[str, dict] = {
     "no_semantic": {"use_semantic": False},
     "no_hints": {"use_hints": False},
     "no_moves": {"moves": frozenset()},
+    "no_graph": {"use_graph": False},
+    # the graph slice in the bundle, but no dependency factor in the ranking
+    "graph_no_factor": {"rca": RcaSettings(graph_weight=0)},
 }
 
 

@@ -44,6 +44,7 @@ from .models import (
     Candidate,
     ClarifyResult,
     Evidence,
+    GraphLink,
     LogLine,
     RcaState,
     Report,
@@ -72,6 +73,7 @@ class Around(IntEnum):
     ALERTS = 4
     ERRORS = 5
     OTHERS = 6
+    GRAPH = 7
 
 
 def rows_of[M: BaseModel](
@@ -232,6 +234,20 @@ def evidence_round(
                 **span(start, end),
             )
         )
+    if ctx.graph is not None and ctx.use_graph and anchor.service and anchor.kind != "range":
+        queries.append(
+            local(
+                round_no=n,
+                query_no=Around.GRAPH,
+                tool="graph",
+                title=f"Components around {anchor.service}",
+                why="what it depends on and what depends on it: a cause usually sits below its symptoms",
+                describe=f"graph.around({anchor.service!r}, depth={cfg.graph_depth})",
+                op="around",
+                nodes=[anchor.service],
+                depth=cfg.graph_depth,
+            )
+        )
     # hints describe the moment it broke: a widened window would mix in older, unrelated trouble
     near = window or (at - cfg.before, min(at + cfg.after, ctx.now))
     for i, levels, title in (
@@ -315,6 +331,7 @@ def rca_advance(spec: QuerySpec, raw_state: dict, done: Round, outputs: dict, ct
             evidence=lines,
             notes=notes,
             hints=hints,
+            graph=graph_links(rows_of(done, outputs, Around.GRAPH, GraphRow), done, outputs, ctx),
             groups=ctx.groups_of({c.service for c in cands} | {e.service for e in lines}),
         )
         return synthesize_step(spec, report, ctx, state, done.n)
@@ -512,6 +529,8 @@ def rank(
             if s >= 0.3
         }
 
+    below = depends_on(rows_of(done, outputs, Around.GRAPH, GraphRow), anchor.service)
+
     cands = []
     for c in counts:
         tid = ctx.canonical(c.template_id)
@@ -561,6 +580,13 @@ def rank(
             when_why = f"first seen {_ago(c.first, anchor.at)}"
 
         why = [anomaly_why, rarity_why, when_why]
+        dependency = 1.0
+        hops = below.get(c.service or "")
+        if hops and (c.level in ("error", "warn") or tid in ctx.shutdown) and cfg.graph_weight:
+            dependency = 1 + cfg.graph_weight / hops
+            why.append(
+                f"{anchor.service} depends on {c.service} ({hops} hop{'s' if hops > 1 else ''})"
+            )
         cands.append(
             Candidate(
                 template_id=tid,
@@ -577,7 +603,8 @@ def rank(
                 anomaly=round(anomaly, 3),
                 rarity=round(rarity, 3),
                 proximity=round(proximity, 3),
-                score=round(anomaly * rarity * proximity, 4),
+                dependency=round(dependency, 3),
+                score=round(anomaly * rarity * proximity * dependency, 4),
                 why="; ".join(why),
                 template=ctx.templates.get(tid, "not parsed yet"),
             )
@@ -590,7 +617,7 @@ def rank(
             gap = (lead.first - c.first).total_seconds()
             if c.new and 0 < gap <= cfg.precursor_seconds and c.anomaly < cfg.error_weight:
                 c.anomaly = cfg.error_weight
-                c.score = round(c.anomaly * c.rarity * c.proximity, 4)
+                c.score = round(c.anomaly * c.rarity * c.proximity * c.dependency, 4)
                 c.why += f"; new, {gap:.0f} s before the top line: a likely cause"
         cands.sort(key=lambda c: (-round(c.score, 2), c.first))
     top = cands[: cfg.max_candidates]
@@ -641,6 +668,59 @@ def rank(
             why=f"{anchor.service} just before the anchor",
         )
     return top, evidence, notes
+
+
+class GraphRow(BaseModel):
+    """One edge the graph read returned (``engine.graph_read``)."""
+
+    src: str
+    dst: str
+    relation: str = "depends_on"
+    templates: list[int] = []
+    status: list[str] = []
+    by: str = "llm"
+    hops: int = 1
+
+
+def depends_on(edges: list[GraphRow], service: str | None) -> dict[str, int]:
+    """What ``service`` depends on through ``edges``: service -> hops."""
+    if not service:
+        return {}
+    nxt: dict[str, list[str]] = defaultdict(list)
+    for e in edges:
+        nxt[e.src].append(e.dst)
+    hops, todo = {service: 0}, [service]
+    while todo:
+        cur = todo.pop(0)
+        for n in nxt[cur]:
+            if n not in hops:
+                hops[n] = hops[cur] + 1
+                todo.append(n)
+    hops.pop(service)
+    return hops
+
+
+def graph_links(edges: list[GraphRow], done: Round, outputs: dict, ctx: Ctx) -> list[GraphLink]:
+    """The graph slice as cited refs (G1, ...), each with its templates' lines and errors in the window."""
+    per: dict[tuple, list[int]] = defaultdict(lambda: [0, 0])
+    for c in rows_of(done, outputs, Around.TEMPLATES, TemplateCount):
+        n = per[(c.service, ctx.canonical(c.template_id))]
+        n[0] += c.n
+        n[1] += c.n if c.level in ("error", "warn") else 0
+    return [
+        GraphLink(
+            ref=f"G{i}",
+            src=e.src,
+            dst=e.dst,
+            relation=e.relation,
+            status=e.status,
+            templates=e.templates,
+            lines=sum(per[(e.src, t)][0] for t in e.templates),
+            errors=sum(per[(e.src, t)][1] for t in e.templates),
+            by=e.by,
+        )
+        for i, e in enumerate(edges, 1)
+    ]
 
 
 def _ago(first: datetime, at: datetime) -> str:

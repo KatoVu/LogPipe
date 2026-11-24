@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from ..graph.service import health
 from ..server.stores import Compiler, StoreReads
 from ..settings import AskSettings, RcaSettings, get_settings
 from .models import (
@@ -55,6 +56,8 @@ class Ctx:
     use_logbert: bool = True
     use_semantic: bool = True
     use_hints: bool = True
+    graph: Any = None  # the component graph (logpipe.graph.store.GraphStore), None without one
+    use_graph: bool = True
     # follow-up kinds the LLM may ask for; None: all of them
     moves: frozenset[str] | None = None
     ask: AskSettings = field(default_factory=lambda: get_settings().ask)
@@ -222,7 +225,105 @@ def execute(q: Query, ctx: Ctx) -> list[dict]:
     if q.tool == "alerts":
         start, end = q.args["start"], q.args["end"]
         return [a for a in ctx.alerts(500) if a["window_end"] >= start and a["window_start"] <= end]
+    if q.tool == "graph":
+        return graph_read(ctx, q.args["op"], q.args["nodes"], int(q.args.get("depth", 2)))
     raise ValueError(f"unknown local read {q.tool}")
+
+
+GRAPH_OPS = {
+    "downstream": "what {0} depends on",
+    "upstream": "what depends on {0}",
+    "around": "the components around {0}",
+    "path": "how {0} and {1} are linked",
+}
+
+
+def graph_read(ctx: Ctx, op: str, nodes: list[str], depth: int = 2) -> list[dict]:
+    """Edges of the component graph: around a node (``downstream``, ``upstream``, ``around``, each
+    with the hops of its far end from ``nodes[0]``), or the ``path`` between two."""
+    g = ctx.graph
+    if g is None or op not in GRAPH_OPS:
+        return []
+    if op == "path":
+        return [e.to_dict() | {"hops": i + 1} for i, e in enumerate(g.path(nodes[0], nodes[1]))]
+    node = nodes[0]
+    hops = {node: 0}
+    if op in ("downstream", "around"):
+        hops |= g.downstream(node, depth)
+    if op in ("upstream", "around"):
+        hops |= {n: h for n, h in g.upstream(node, depth).items() if n not in hops}
+    down = set(g.downstream(node, depth)) | {node} if op != "upstream" else set()
+    up = set(g.upstream(node, depth)) | {node} if op != "downstream" else set()
+    out = []
+    for e in g.edges():
+        if (e.src in down and e.dst in down) or (e.src in up and e.dst in up):
+            far = max(hops.get(e.src, 0), hops.get(e.dst, 0))
+            out.append(e.to_dict() | {"hops": far})
+    return sorted(out, key=lambda e: (e["hops"], e["id"]))
+
+
+def graph_round(spec: QuerySpec, ctx: Ctx, start: datetime, end: datetime) -> Round:
+    """A dependency question: the graph read, and the evidence templates' lines in the range."""
+    op = {"impact": "upstream", "depends": "downstream", "path": "path"}[spec.graph_op or "impact"]
+    nodes = spec.services[:2]
+    return Round(
+        1,
+        "dependencies",
+        [
+            local(
+                round_no=1,
+                query_no=1,
+                tool="graph",
+                title="Component graph: " + GRAPH_OPS[op].format(*nodes, ""),
+                why="the links the templates show, learned when each template was made",
+                describe=f"graph.{op}({', '.join(map(repr, nodes))}, depth=6)",
+                op=op,
+                nodes=nodes,
+                depth=6,
+            ),
+            log_read(
+                ctx,
+                round_no=1,
+                query_no=2,
+                tool="template_counts",
+                title="Lines per template in the range",
+                why="how busy and how healthy each link is now (its templates' lines and errors)",
+                filters={},
+                **span(start, end),
+            ),
+        ],
+    )
+
+
+def graph_table(done: Round, outputs: dict, ctx: Ctx) -> TableResult:
+    edges = outputs.get(done.queries[0].id) or []
+    per: dict[tuple, list[int]] = {}
+    for r in outputs.get(done.queries[1].id) or []:
+        c = TemplateCount.model_validate(r)
+        n = per.setdefault((c.service, ctx.canonical(c.template_id)), [0, 0])
+        n[0] += c.n
+        n[1] += c.n if c.level in ("error", "warn") else 0
+    rows = []
+    for e in edges:
+        lines = sum(per.get((e["src"], t), [0, 0])[0] for t in e["templates"])
+        errors = sum(per.get((e["src"], t), [0, 0])[1] for t in e["templates"])
+        rows.append(
+            [
+                e["src"],
+                e["relation"],
+                e["dst"],
+                e["hops"],
+                lines,
+                errors,
+                health(lines, errors),
+                e["by"],
+            ]
+        )
+    return TableResult(
+        columns=["from", "relation", "to", "hops", "lines", "errors", "health", "learned by"],
+        rows=rows,
+        compiled=done.queries[0].compiled,
+    )
 
 
 def describe_templates(found: list[tuple[int, float]], templates: dict[int, str]) -> str:
@@ -251,6 +352,12 @@ def first_round(spec: QuerySpec, ctx: Ctx) -> Outcome:
         return rca_first_round(spec, ctx)
 
     start, end = time_range(spec, ctx.now)
+    if spec.intent == "graph":
+        if ctx.graph is None or not ctx.use_graph:
+            return Outcome(
+                result=ClarifyResult(message="There's no component graph yet to answer that from.")
+            )
+        return Outcome(graph_round(spec, ctx, start, end))
     if spec.intent == "summary":
         from .rca import summary_round
 
@@ -336,6 +443,8 @@ def advance(
             )
         )
     rows = outputs[q.id]
+    if spec.intent == "graph":
+        return Outcome(result=graph_table(done, outputs, ctx))
     if q.tool == "aggregate":
         cols = list(rows[0]) if rows else []
         return Outcome(
