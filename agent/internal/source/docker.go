@@ -2,6 +2,7 @@ package source
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -110,14 +111,16 @@ func listContainers(ctx context.Context, client *http.Client, labels []string) (
 
 func followContainer(ctx context.Context, client *http.Client, c container, name string, src config.Source, pos *Positions, tr *Tracker, out chan<- Line) error {
 	key := "docker:" + c.ID
-	since := "0"
+	since, tail := "0", "all"
 	if p, ok := pos.Get(key); ok && p.Cursor != "" {
 		since = p.Cursor
+	} else if src.StartAt == "tail" {
+		tail = fmt.Sprint(cmp.Or(src.TailLines, DefaultTailLines))
 	} else if src.StartAt != "beginning" {
 		since = fmt.Sprint(time.Now().Unix())
 	}
 	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("http://docker/containers/%s/logs?follow=1&stdout=1&stderr=1&timestamps=1&since=%s", c.ID, since), nil)
+		fmt.Sprintf("http://docker/containers/%s/logs?follow=1&stdout=1&stderr=1&timestamps=1&since=%s&tail=%s", c.ID, since, tail), nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
