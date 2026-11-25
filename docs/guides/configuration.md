@@ -76,13 +76,12 @@ prefix, read once through `get_settings()`. `.env` is loaded by `make` (and `uv 
     | `GRAPH_WEIGHT` / `GRAPH_DEPTH` | 1.0 / 2 | [component graph](../architecture/graph.md): ranking factor, slice hops |
     | `CALL_WEIGHT` | 0.1 | a broken [traced link](../architecture/graph.md#from-traces)'s callee goes this share above its caller |
 
-=== "Component graph (`LOGPIPE_GRAPH_`, `NEO4J_`)"
+=== "Component graph (`LOGPIPE_GRAPH_`)"
 
     | Field | Default | |
     |---|---|---|
     | `LOGPIPE_GRAPH_ENABLED` | true | label new templates, use the graph in Ask |
     | `LOGPIPE_GRAPH_BATCH` | 40 | templates per labelling call |
-    | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | unset / neo4j / — | unset: kept in memory |
 
 ## In the UI (`RuntimeSettings`)
 

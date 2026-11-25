@@ -48,15 +48,16 @@ by hand stays removed.
 
 | | where | when |
 |---|---|---|
-| components and links (+ evidence templates, who learned it) | Neo4j (`NEO4J_URI`), else memory | derived again when labels or edits change |
+| components and links (+ evidence templates, who learned it) | memory | derived again from control docs when labels, edits or traced links change |
 | how a link looks now (lines, error/warn lines) | the log store | when someone looks: its evidence templates' counts |
 
 A template holds both a 200 and a 502, so a link's errors are its templates' error/warn lines
 counted apart, not the level of the template. Health: idle (no lines), ok, warn (< 20 % errors),
 error.
 
-Neo4j holds `(:Component {name})-[:LINK {relation, templates, by, status}]->(:Component)`. Every
-read is a fixed, parameterised Cypher statement (`graph/store.py`); the LLM never writes Cypher.
+The graph is tens to hundreds of links and is read only through fixed walks (upstream,
+downstream, path in `graph/store.py`), so it lives in memory: no graph database, and a restart
+rebuilds it from the control docs. The LLM never writes a query.
 
 ## From traces
 
@@ -96,14 +97,11 @@ server, a database's own log) and anything that drops the trace header.
 
 | setting | default | |
 |---|---|---|
-| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | unset / neo4j / — | unset: in memory |
 | `LOGPIPE_GRAPH_ENABLED` | true | |
 | `LOGPIPE_GRAPH_BATCH` | 40 | templates per labelling call |
 | `LOGPIPE_RCA_GRAPH_WEIGHT` | 1.0 | 0 turns the ranking factor off |
 | `LOGPIPE_RCA_GRAPH_DEPTH` | 2 | hops in the bundle's slice |
 | `LOGPIPE_RCA_CALL_WEIGHT` | 0.1 | a broken traced link's callee goes this much above its caller; 0 turns it off |
-
-`docker compose --profile graph up -d neo4j` starts Neo4j (the server image has the driver).
 
 ## Limits
 

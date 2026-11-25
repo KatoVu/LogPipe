@@ -159,7 +159,7 @@ graph it moves from unranked to second lead, behind the shop-api error it explai
 
 | | |
 |---|---|
-| graph query (upstream + downstream, depth 6) | memory p50 0.003 ms; Neo4j p50 4.4 ms, p99 19 ms (2 links); 3.4 / 10 ms (15 links) |
+| graph query (upstream + downstream, depth 6) | p50 0.003 ms in memory (Neo4j, since dropped, was 3–4 ms) |
 | RCA prompt, graph slice | ~120 tokens (2 links), ~480 (15 links, Online Boutique) |
 | per line at ingest | nothing: labels are per template |
 

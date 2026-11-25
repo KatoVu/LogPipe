@@ -8,7 +8,7 @@ On the generated web shop, with its services naming what they talk to (``--topol
    depend on?", scored as set F1 against the true answer: Ask with the graph, Ask without it
    (it can't say), and the LLM alone reading the last 200 lines (``--llm``).
 3. **Cost**: labelling calls, templates and prompt tokens (characters / 4), labelling time, and
-   graph query latency (memory, and Neo4j when ``NEO4J_URI`` is set).
+   graph query latency.
 
 ``--rcaeval OUT`` instead scores the links learned on each RCAEval case (``graphs.*.jsonl``,
 written by ``logpipe eval rcaeval``) against Online Boutique's architecture.
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -133,35 +132,25 @@ def llm_only_answer(world, llm, question: str, slot: Slot) -> set[str]:
 
 
 def query_latency(edges, n: int = 200) -> dict:
-    from ..graph.store import MemoryGraph, Neo4jGraph
+    from ..graph.store import MemoryGraph
 
-    stores = {"memory": MemoryGraph()}
-    if os.environ.get("NEO4J_URI"):
-        stores["neo4j"] = Neo4jGraph(
-            os.environ["NEO4J_URI"],
-            os.environ.get("NEO4J_USER", "neo4j"),
-            os.environ.get("NEO4J_PASSWORD", ""),
-        )
-    out = {}
+    g = MemoryGraph()
+    g.replace(edges)
     nodes = sorted({e.src for e in edges} | {e.dst for e in edges}) or ["x"]
-    for name, g in stores.items():
-        g.replace(edges)
-        took = []
-        for i in range(n):
-            node = nodes[i % len(nodes)]
-            started = time.perf_counter()
-            g.upstream(node, 6)
-            g.downstream(node, 6)
-            took.append((time.perf_counter() - started) * 1000 / 2)
-        took.sort()
-        out[name] = {
+    took = []
+    for i in range(n):
+        node = nodes[i % len(nodes)]
+        started = time.perf_counter()
+        g.upstream(node, 6)
+        g.downstream(node, 6)
+        took.append((time.perf_counter() - started) * 1000 / 2)
+    took.sort()
+    return {
+        "memory": {
             "p50_ms": round(took[len(took) // 2], 3),
             "p99_ms": round(took[int(len(took) * 0.99)], 3),
         }
-        if name == "neo4j":
-            g.replace([])
-            g.close()
-    return out
+    }
 
 
 def shop(args) -> dict:

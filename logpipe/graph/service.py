@@ -25,7 +25,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from .label import RELATIONS, prompt_for, propose, resolve
-from .store import Edge, GraphStore
+from .store import Edge, MemoryGraph
 from .traces import CallLog
 
 LABELLED_WITHIN = timedelta(days=1)
@@ -42,7 +42,7 @@ def health(lines: int, errors: int) -> str:
 
 
 class GraphService:
-    def __init__(self, control, store: GraphStore, batch: int = 40):
+    def __init__(self, control, store: MemoryGraph, batch: int = 40):
         self.control, self.store, self.batch = control, store, batch
         self._version: int | None = None
         self._lock = threading.Lock()

@@ -44,7 +44,7 @@ from ..enrich.llm import LLMAdapter
 from ..enrich.validate import clean_keys
 from ..enrich.worker import CycleReport
 from ..graph.service import GraphService
-from ..graph.store import open_graph
+from ..graph.store import MemoryGraph
 from ..observability import Datadog
 from ..parsing.frozen_parser import ParserHandle, Status
 from ..parsing.grok import compile_rule, rule_from_template
@@ -321,7 +321,7 @@ class Server:
         self.volume = Volume(control)
         self.graph = GraphService(
             control,
-            open_graph(self.config.neo4j.uri, self.config.neo4j.user, self.config.neo4j.password),
+            MemoryGraph(),
             self.config.graph.batch,
         )
         self._templates_at: tuple[float, int] | None = None

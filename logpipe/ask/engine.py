@@ -56,7 +56,7 @@ class Ctx:
     use_logbert: bool = True
     use_semantic: bool = True
     use_hints: bool = True
-    graph: Any = None  # the component graph (logpipe.graph.store.GraphStore), None without one
+    graph: Any = None  # the component graph (logpipe.graph.store.MemoryGraph), None without one
     calls: Any = None  # calls measured from traces (logpipe.graph.traces.CallLog)
     use_graph: bool = True
     # follow-up kinds the LLM may ask for; None: all of them

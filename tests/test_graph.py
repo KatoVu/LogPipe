@@ -3,14 +3,11 @@ they're drafted (reviewed with them) or learned online."""
 
 from __future__ import annotations
 
-import os
 import random
-
-import pytest
 
 from logpipe.graph.label import EdgeProposal, Labels, mentions, propose, resolve
 from logpipe.graph.service import GraphService, health
-from logpipe.graph.store import Edge, MemoryGraph, Neo4jGraph
+from logpipe.graph.store import Edge, MemoryGraph
 from logpipe.server.control import ControlStore
 from tests.test_server import calibrated, env, events, pump, send  # noqa: F401
 
@@ -64,26 +61,8 @@ def test_propose_one_call_per_batch_and_bad_indexes_are_dropped():
     assert by == "rules" and per[0][0]["target"] == "postgres"
 
 
-@pytest.fixture(params=["memory", "neo4j"])
-def graph_store(request):
-    if request.param == "memory":
-        yield MemoryGraph()
-        return
-    # opt in: `docker compose --profile graph up -d neo4j` and NEO4J_URI=bolt://localhost:7687
-    if not os.environ.get("NEO4J_URI"):
-        pytest.skip("NEO4J_URI not set")
-    g = Neo4jGraph(
-        os.environ["NEO4J_URI"],
-        os.environ.get("NEO4J_USER", "neo4j"),
-        os.environ.get("NEO4J_PASSWORD", "logpipe-graph"),
-    )
-    yield g
-    g.replace([])
-    g.close()
-
-
-def test_graph_store_walks_both_ways_and_finds_paths(graph_store):
-    g = graph_store
+def test_graph_store_walks_both_ways_and_finds_paths():
+    g = MemoryGraph()
     g.replace([Edge("nginx", "api"), Edge("api", "db"), Edge("api", "cache"), Edge("worker", "db")])
     assert g.downstream("nginx", 1) == {"api": 1}
     assert g.downstream("nginx", 2) == {"api": 1, "db": 2, "cache": 2}
