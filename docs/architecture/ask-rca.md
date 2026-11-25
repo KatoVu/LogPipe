@@ -123,7 +123,6 @@ The LLM may also ask for **typed follow-up moves** (`ask/moves.py`), never SQL:
 | `trace` | an id copied from the bundle, across every service | the id must occur in the bundle |
 | `rate` | error or all lines per service per step (cited `S1…`) | known services |
 | `neighbours` | errors in any service near the anchor | — |
-| `graph` | the component graph upstream, downstream or the path between two services | services the graph knows |
 
 Up to 3 moves a round and 4 follow-up rounds, covered by the approval of the first round.
 

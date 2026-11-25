@@ -89,11 +89,12 @@ server, a database's own log) and anything that drops the trace header.
 - **Ask, dependency questions**: "what breaks if postgres fails?", "what does shop-api depend
   on?", "how are nginx and postgres linked?" route to a `graph` intent (a regex fast path, else
   the LLM router) and answer as a table straight from the graph, without reading lines.
-- **RCA**: the evidence round reads the graph around the anchor's service (`G1…` refs in the
-  bundle, cited like lines). A candidate on a service the anchor's service depends on, if it's an
-  error, a warning or new there, is multiplied by `1 + graph_weight / hops`: a cause sits below
-  its symptoms. With no service at the anchor, the focus is the top error's service. The LLM can
-  ask for more of it with a `graph` follow-up move.
+- **RCA**: the evidence round reads the graph around the anchor's service, and the ranking uses
+  it. A candidate on a service the anchor's service depends on, if it's an error, a warning or
+  new there, is multiplied by `1 + graph_weight / hops`: a cause sits below its symptoms. With no
+  service at the anchor, the focus is the top error's service. The links show in the report
+  (`G1…`), but **they're not in the LLM's prompt**: on RE3-OB with Gemini they cost ~2.2k tokens
+  a case and didn't improve the answer, which sometimes followed a link to the wrong service.
 
 | setting | default | |
 |---|---|---|

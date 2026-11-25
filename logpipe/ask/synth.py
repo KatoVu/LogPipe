@@ -83,7 +83,7 @@ Ranked templates (score = anomaly x rarity x proximity):
 
 Value hints (share of error/warn lines vs the other lines in the window):
 {hints}
-{graph}{series}
+{series}
 Lines (chronological):
 {lines}"""
 
@@ -136,31 +136,6 @@ def series_text(report: Report) -> str:
         for s in report.series
     ]
     return "\nRates (follow-up reads):\n" + "\n".join(rows) + "\n"
-
-
-def graph_text(report: Report) -> str:
-    """The component graph around the anchor (empty without one, so the prompt is unchanged)."""
-    if not report.graph:
-        return ""
-    rows = [
-        f"{g.ref} {g.src} {g.relation} {g.dst}"
-        + (f" [{', '.join(g.status)}]" if g.status else "")
-        + (
-            f" | traced calls: {g.calls} ({g.call_errors} failed, {g.ms:g} ms mean) in the window,"
-            f" {g.base_calls} ({g.base_ms:g} ms) in the window before"
-            + (f"; BROKEN: {g.broken}" if g.broken else "")
-            if g.calls is not None
-            else ""
-        )
-        + f" | its templates: {g.lines} lines, {g.errors} error/warn in the window"
-        for g in report.graph
-    ]
-    return (
-        "\nComponent graph (learned from the templates and traces; cite G<n>). A failure in what a service "
-        "depends on shows up in the service first, so look below the loudest errors. To see more "
-        "of it, follow_up kind graph with services [name] and value upstream, downstream, or "
-        "path (two services):\n" + "\n".join(rows) + "\n"
-    )
 
 
 def _line(e) -> str:
@@ -315,7 +290,6 @@ def synthesize(spec: QuerySpec, report: Report, ctx: Ctx) -> tuple[Answer, list[
         lines=lines,
         hints=hints_text(report),
         series=series_text(report),
-        graph=graph_text(report),
     )
     try:
         out = ctx.adapter.ask(AnswerOut, prompt)

@@ -148,6 +148,17 @@ def test_broken_calls_put_the_callee_above_its_caller(env):  # noqa: F811
     ]
     lift_broken_calls(chain, whole, ctx)
     assert [c.service for c in chain] == ["currency", "checkout", "frontend"]
+    # checkout itself fails: what it stopped calling altogether was never reached
+    gave_up = [
+        cand("frontend", 0.5),
+        cand("checkout", 0.2),
+        cand("currency", 0.1),
+        cand("email", 0.1),
+    ]
+    whole.append(GraphRow(src="checkout", dst="email", by="traces", calls=0, base_calls=112))
+    lift_broken_calls(gave_up, whole, ctx)
+    assert [c.service for c in gave_up][:3] == ["currency", "checkout", "frontend"]
+    assert "checkout -> email" not in gave_up[3].why
     ctx.rca = ctx.rca.model_copy(update={"call_weight": 0})
     again = [cand("checkout", 0.44), cand("email", 0.05)]
     lift_broken_calls(again, edges, ctx)

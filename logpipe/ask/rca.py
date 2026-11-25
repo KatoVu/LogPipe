@@ -755,7 +755,9 @@ def lift_broken_calls(cands: list[Candidate], edges: list[GraphRow], ctx: Ctx) -
     one: what the caller logs is the callee's symptom. Callers first, deepest callee last, so a
     chain a -> b -> c ends with c on top."""
     weight = ctx.rca.call_weight
-    bad = [(e, why) for e in edges if (why := e.broken)]
+    failing = {e.dst for e in edges if e.calls and e.call_errors / e.calls >= 0.2}
+    # a failing caller that stopped calling something never reached it: no sign against it
+    bad = [(e, why) for e in edges if (why := e.broken) and not (e.src in failing and e.calls == 0)]
     if not (weight and bad):
         return
 
