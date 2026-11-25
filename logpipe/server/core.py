@@ -53,21 +53,17 @@ from ..pipeline import Pipeline
 from ..registry import UNK_TEMPLATE_ID, NewTemplate, SchemaRegistry
 from ..settings import RuntimeSettings, get_settings
 from ..sources.file_replay import LogEvent
-from ..storage.memory import MemoryStore
 from ..unresolved import UnresolvedQueue
 from . import review
 from .control import ControlStore
 from .drift import Drift, histogram, sequence_signal
 from .groups import Groups
 from .metrics import (
-    ClickHouseSeries,
     CountedAdapter,
-    MemorySeries,
     MetricRules,
     Metrics,
-    MongoSeries,
 )
-from .stores import reads_for
+from .stores import reads_for, series_for
 from .volume import Volume
 
 if TYPE_CHECKING:
@@ -310,12 +306,7 @@ class Server:
         self.datadog = datadog or Datadog()
         self.store, self.control = store, control
         self.reads = reads_for(store)
-        if type(store).__name__ == "MongoStore":
-            self.metrics = Metrics(MongoSeries(store.db))
-        else:
-            self.metrics = Metrics(
-                MemorySeries() if isinstance(store, MemoryStore) else ClickHouseSeries(store.client)
-            )
+        self.metrics = Metrics(series_for(store))
         self.metric_rules = MetricRules(control)
         self.drift = Drift()
         self.volume = Volume(control)

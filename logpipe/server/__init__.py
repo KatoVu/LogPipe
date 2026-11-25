@@ -81,8 +81,9 @@ def run(
     from ..storage import open_store
     from ..unresolved import open_queue
     from .app import create_app
-    from .control import ClickHouseDocs, ControlStore
+    from .control import ControlStore
     from .core import Server
+    from .stores import docs_for
 
     dd_settings = get_settings().datadog
     dd_query = datadog_pull or dd_settings.pull_query
@@ -91,12 +92,7 @@ def run(
     dd = datadog or Datadog()
     log_file = setup_logging(data_dir)
     log_store = open_store(store)
-    # shortcut: with the memory store the control plane is in memory too; use clickhouse to keep agents, keys and models across restarts.
-    control = ControlStore(ClickHouseDocs(log_store.client) if store == "clickhouse" else None)  # type: ignore[attr-defined]
-    if store == "mongodb":
-        from ..storage.mongo import MongoDocs
-
-        control = ControlStore(MongoDocs(log_store.db))  # type: ignore[attr-defined]
+    control = ControlStore(docs_for(log_store))
     server = Server(
         log_store,
         control,
