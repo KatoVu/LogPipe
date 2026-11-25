@@ -195,3 +195,44 @@ def test_remote_refuses_what_would_copy_lines_off_the_client():
         residency_check("kafka", datadog=False)
     with pytest.raises(SystemExit, match="Datadog"):
         residency_check("memory", datadog=True)
+
+
+@pytest.mark.integration
+def test_a_clickhouse_dataplane_answers_every_kind_of_call(monkeypatch):
+    from logpipe.storage.clickhouse import ClickHouseStore
+
+    monkeypatch.delenv("CLICKHOUSE_READONLY_USER", raising=False)  # exists only in compose
+    db = f"logpipe_dataplane_test_{uuid.uuid4().hex[:8]}"
+    try:
+        local = ClickHouseStore.from_env(database=db, batch_size=10)
+    except Exception as error:  # noqa: BLE001 - no ClickHouse here
+        pytest.skip(f"no ClickHouse: {error}")
+    tunnel, stop = Tunnel("k", host="127.0.0.1", port=0, timeout=30), threading.Event()
+    threading.Thread(
+        target=serve,
+        args=(f"ws://127.0.0.1:{tunnel.port}", "k", local),
+        kwargs={"stop": stop},
+        daemon=True,
+    ).start()
+    try:
+        assert tunnel.wait_connected(10)
+        remote = RemoteStore(tunnel)
+        remote.insert_logs([row(i) for i in range(5)] + [row(9, Status.PENDING)])
+        assert remote.count_by_status() == {"FINAL": 5, "PENDING": 1}
+        assert len(remote.fetch_pending()) == 1
+        reads = reads_for(remote)
+        assert reads.engine == "clickhouse"
+        assert len(reads.recent({}, 10)) == 6
+        out = reads.query(f"SELECT count() AS n FROM {reads.compiler.table}")
+        assert out["rows"] == [[6]] or out["rows"] == [(6,)]
+        docs = docs_for(remote)
+        docs.write("agent", "a1", {"name": "x"})
+        assert ("agent", "a1", {"name": "x"}) in docs.load()
+        series = series_for(remote)
+        series.write(datetime.now(UTC).timestamp(), {"lines": 3.0})
+        assert "lines" in series.query(5, 10)
+    finally:
+        stop.set()
+        tunnel.close()
+        local.client.command(f"DROP DATABASE IF EXISTS `{db}`")
+        local.client.close()

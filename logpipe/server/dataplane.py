@@ -193,7 +193,8 @@ class Tunnel:
     def _fail_pending(self, why: str) -> None:
         pending, self._pending = self._pending, {}
         for fut in pending.values():
-            fut.set_exception(DataplaneDown(why))
+            if not fut.done():  # its answer may have landed a moment ago
+                fut.set_exception(DataplaneDown(why))
 
     def _handle(self, conn) -> None:
         from websockets.exceptions import ConnectionClosed
