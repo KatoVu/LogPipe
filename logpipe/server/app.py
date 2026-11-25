@@ -9,6 +9,7 @@ import uuid
 import zlib
 from collections import Counter
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -22,6 +23,7 @@ from fastapi.responses import (
 )
 
 from ..enrich.sql_guard import validate_sql
+from ..graph import traces
 from ..parsing.grok import compile_rule, rule_from_template
 from ..registry import UNK_TEMPLATE_ID
 from . import otlp
@@ -190,6 +192,21 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
         except Busy as error:  # OTLP clients retry 429 with backoff
             raise HTTPException(429, str(error)) from error
         # An empty ExportLogsServiceResponse in the request's encoding.
+        proto = ctype.split(";")[0].strip() == otlp.PROTOBUF
+        return Response(
+            b"" if proto else b"{}", media_type=otlp.PROTOBUF if proto else "application/json"
+        )
+
+    @app.post("/v1/traces")
+    async def otlp_traces(request: Request, key: Annotated[dict, Depends(agent_key)]) -> Response:
+        """OTLP/HTTP traces, JSON or protobuf: only who called whom is kept (calls, failures and
+        time per minute), for the component graph."""
+        raw = await body(request)
+        ctype = request.headers.get("content-type", "application/json")
+        try:
+            traces.ingest(server.graph.calls, traces.decode(raw, ctype))
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         proto = ctype.split(";")[0].strip() == otlp.PROTOBUF
         return Response(
             b"" if proto else b"{}", media_type=otlp.PROTOBUF if proto else "application/json"
@@ -920,6 +937,33 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
     @app.post("/api/warnings/{wid}/recalibrate", status_code=202)
     def recalibrate(wid: str) -> dict:
         return server.recalibrate_warning(wid)
+
+    @app.get("/api/graph")
+    def graph(minutes: int = 60) -> dict:
+        end = datetime.now(UTC)
+        view = server.graph.view(server, end - timedelta(minutes=clamp(minutes)), end)
+        texts = server.ask.catalog().templates
+        for e in view["edges"]:
+            e["evidence"] = [{"id": t, "text": texts.get(t, "")} for t in e["templates"]]
+        return view
+
+    @app.post("/api/graph/edges")
+    def graph_add(body: Annotated[dict, Body()]) -> dict:
+        server.graph.edit(
+            str(body.get("src") or ""),
+            str(body.get("dst") or ""),
+            str(body.get("relation") or "depends_on"),
+            removed=False,
+        )
+        server.graph.rebuild(server)
+        return {"ok": True}
+
+    @app.delete("/api/graph/edges/{edge_id}")
+    def graph_remove(edge_id: str) -> dict:
+        src, dst, relation = (edge_id.split(">") + ["", "", ""])[:3]
+        server.graph.edit(src, dst, relation, removed=True)
+        server.graph.rebuild(server)
+        return {"ok": True}
 
     @app.get("/api/bench")
     def bench_runs() -> dict:

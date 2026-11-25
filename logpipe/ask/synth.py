@@ -145,7 +145,7 @@ def _line(e) -> str:
     )
 
 
-REF = re.compile(r"^([LTHS]\d+)$")
+REF = re.compile(r"^([LTHSG]\d+)$")
 
 
 def _valid(cites: list[str], refs: set[str]) -> list[str]:

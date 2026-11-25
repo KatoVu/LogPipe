@@ -2,6 +2,7 @@ package source
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,8 @@ func Journald(ctx context.Context, src config.Source, pos *Positions, tr *Tracke
 			args = append(args, "--after-cursor", p.Cursor)
 		} else if src.StartAt == "beginning" {
 			args = append(args, "--no-tail")
+		} else if src.StartAt == "tail" {
+			args = append(args, "-n", fmt.Sprint(cmp.Or(src.TailLines, DefaultTailLines)))
 		} else {
 			args = append(args, "-n", "0")
 		}

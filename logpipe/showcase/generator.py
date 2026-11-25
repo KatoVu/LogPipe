@@ -233,8 +233,12 @@ class Event:
 
 
 class ShopGenerator:
-    def __init__(self, out: Path, rate: float = 3.0, seed: int = 7):
+    def __init__(self, out: Path, rate: float = 3.0, seed: int = 7, topology: bool = False):
         self.out, self.rate = out, rate
+        # Lines that name what a service talks to, like real ones do (nginx's upstream, the
+        # connection pool's host, the URL a client calls): what the component graph learns from.
+        # Off by default, so recorded evals keep the lines they were recorded on.
+        self.topology = topology
         self.rng = random.Random(seed)
         self.incident_until = 0.0
         self.inventory = False
@@ -242,6 +246,8 @@ class ShopGenerator:
         # "payment … authorized" reads "payment … approved" (same event, new wording)
         self.firmware = False
         self.orders = 0
+        self.spans: list[tuple[str, dict]] = []  # (service, OTLP span), for take_traces()
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -257,10 +263,13 @@ class ShopGenerator:
 
     def _nginx(self, now: datetime, method: str, path: str, status: int) -> str:
         r, now = self.rng, now.astimezone()
-        return (
+        line = (
             f"10.0.{r.randint(0, 3)}.{r.randint(2, 254)} - - [{now:%d/%b/%Y:%H:%M:%S %z}] "
             f'"{method} {path} HTTP/1.1" {status} {r.randint(120, 9000)} "-" "{r.choice(AGENTS)}"'
         )
+        if self.topology and path.startswith("/api/"):
+            line += f" upstream=shop-api:8080 rt={r.uniform(0.005, 0.4):.3f}"
+        return line
 
     def _stack(self, error: str, frames: list[str]) -> str:
         return "\n".join([error, *(f"\tat {f}" for f in frames)])
@@ -361,6 +370,18 @@ class ShopGenerator:
             )
         )
         api("INFO", "c.s.order.OrderService", f"order {oid} confirmed for user {user}")
+        if self.topology and self.orders % 25 == 1:
+            api(
+                "INFO",
+                "c.z.h.pool.HikariPool",
+                f"HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@{r.randint(16**5, 16**6 - 1):x} to postgres:5432/shop",
+            )
+        if self.topology and self.inventory:
+            api(
+                "INFO",
+                "c.s.stock.InventoryClient",
+                f"reserving stock via http://inventory:8081/reserve sku={sku} took {r.randint(3, 60)} ms",
+            )
         if self.inventory:
             ev.append(
                 Event(
@@ -376,6 +397,54 @@ class ShopGenerator:
                     )
                 )
         return ev
+
+    def trace(self, now: datetime, incident: bool) -> None:
+        """The order's spans, as its services would export them over OTLP. No randomness, so the
+        log lines stay the ones recorded evals expect."""
+        t, n = int(now.timestamp() * 1e9), self.orders
+
+        def span(sid: int, parent: int, ms: float, error: bool = False, **attrs) -> dict:
+            return {
+                "spanId": f"{n:012x}{sid:04x}",
+                "parentSpanId": f"{n:012x}{parent:04x}" if parent else "",
+                "kind": 3 if attrs else 2,
+                "startTimeUnixNano": str(t),
+                "endTimeUnixNano": str(t + int(ms * 1e6)),
+                "status": {"code": 2 if error else 0},
+                "attributes": [{"key": k, "value": {"stringValue": v}} for k, v in attrs.items()],
+            }
+
+        db = {"db.system": "postgresql", "server.address": "postgres:5432"}
+        out = [
+            ("nginx", span(1, 0, 30_000 if incident else 120, incident)),
+            ("shop-api", span(2, 1, 30_000 if incident else 110, incident)),
+            ("shop-api", span(3, 2, 2, incident, **db)),
+        ]
+        if self.inventory and not incident:
+            out.append(("inventory", span(4, 2, 20)))
+        with self._lock:
+            self.spans = (self.spans + out)[-20_000:]
+
+    def take_traces(self) -> dict | None:
+        """The spans since the last call, as one OTLP ``ExportTraceServiceRequest`` (JSON)."""
+        with self._lock:
+            spans, self.spans = self.spans, []
+        if not spans:
+            return None
+        per: dict[str, list[dict]] = {}
+        for service, sp in spans:
+            per.setdefault(service, []).append(sp)
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": [{"key": "service.name", "value": {"stringValue": svc}}]
+                    },
+                    "scopeSpans": [{"spans": sps}],
+                }
+                for svc, sps in per.items()
+            ]
+        }
 
     def fault(self, mode: str, now: datetime, step: int) -> list[Event]:
         """What the services log ``step`` orders after fault ``mode`` started: step 0 carries the
@@ -485,7 +554,10 @@ class ShopGenerator:
 
     def _loop(self) -> None:
         while not self._stop.wait(1 / self.rate):
-            self.write(self.order(incident=time.monotonic() < self.incident_until))
+            incident = time.monotonic() < self.incident_until
+            self.write(self.order(incident=incident))
+            if self.topology:
+                self.trace(datetime.now(UTC), incident)
 
     def stop(self) -> None:
         self._stop.set()

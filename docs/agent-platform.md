@@ -172,12 +172,16 @@ Sending from an OpenTelemetry Collector:
 ```yaml
 exporters:
   otlphttp/logpipe:
-    logs_endpoint: http://logpipe.example:8080/v1/logs
+    endpoint: http://logpipe.example:8080   # /v1/logs and /v1/traces
     headers: { X-API-Key: lp_xxx }
 service:
   pipelines:
-    logs: { receivers: [filelog], exporters: [otlphttp/logpipe] }
+    logs: { receivers: [filelog, otlp], exporters: [otlphttp/logpipe] }
+    traces: { receivers: [otlp], exporters: [otlphttp/logpipe] }   # optional
 ```
+
+Traces are optional and only feed the [component graph](architecture/graph.md#from-traces):
+`POST /v1/traces` keeps who called whom (calls, failures and time per minute), not the spans.
 
 Heartbeats (every 15s) carry the counters; presence and config pushes ride the long-poll, so the
 UI sees an agent come up, go down or apply a pushed config within about a second. The UI listens

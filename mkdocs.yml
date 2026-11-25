@@ -78,6 +78,7 @@ nav:
       - Anomaly detection (LogBERT): architecture/anomaly.md
       - Server and learning lifecycle: agent-platform.md
       - Ask and root-cause analysis: architecture/ask-rca.md
+      - Component graph: architecture/graph.md
       - MCP for AI assistants: architecture/mcp.md
       - Storage: architecture/storage.md
   - Benchmarks:

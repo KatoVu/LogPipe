@@ -123,8 +123,8 @@ eval-bgl: data-bgl ## LogBERT on a BGL subset
 	$(call EVAL,logbert) --dataset BGL $(LLM_ARG) $(TRAIN)
 
 eval-rcaeval: ## RCA on RCAEval cases, scored by RCAEval (DATASET VIA=direct|mcp LIMIT LLM VARIANTS FRESH=1)
-	test -d $(RCA_OUT)/tasks/$(DATASET) || $(RCAEVAL) export --dataset $(DATASET) \
-		--out $(RCA_OUT)/tasks --data-root $(RCA_OUT)/data
+	# run from RCA_OUT: each dataset downloads to data/<RE>/<dataset>; --data-root means one dataset's dir
+	test -d $(RCA_OUT)/tasks/$(DATASET) || (cd $(RCA_OUT) && $(RCAEVAL) export --dataset $(DATASET) --out tasks)
 	$(LOGPIPE) eval rcaeval $(RCA_OUT)/tasks/$(DATASET) --out $(RCA_OUT) \
 		--via $(VIA) $(if $(LIMIT),--limit $(LIMIT)) $(if $(filter direct,$(VIA)),$(LLM_ARG)) \
 		$(if $(VARIANTS),--variants $(VARIANTS)) $(if $(FRESH),--fresh)

@@ -43,6 +43,8 @@ from ..enrich import llm
 from ..enrich.llm import LLMAdapter
 from ..enrich.validate import clean_keys
 from ..enrich.worker import CycleReport
+from ..graph.service import GraphService
+from ..graph.store import MemoryGraph
 from ..observability import Datadog
 from ..parsing.frozen_parser import ParserHandle, Status
 from ..parsing.grok import compile_rule, rule_from_template
@@ -198,6 +200,10 @@ class _Traced:
         self.fraction, self._end = start, end
         self.calls: list[dict] = []
 
+    @property
+    def can_ask(self) -> bool:
+        return bool(getattr(self._inner, "can_ask", False))
+
     def _report(self, message: str) -> None:
         self.fraction += (
             self._end - self.fraction
@@ -313,6 +319,11 @@ class Server:
         self.metric_rules = MetricRules(control)
         self.drift = Drift()
         self.volume = Volume(control)
+        self.graph = GraphService(
+            control,
+            MemoryGraph(),
+            self.config.graph.batch,
+        )
         self._templates_at: tuple[float, int] | None = None
         self.data_dir = data_dir
         self.registry_path = data_dir / "registry.json"
@@ -829,22 +840,25 @@ class Server:
 
     def _sample(
         self, sids: list[str], progress, start: float, end: float
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str]]:
         """(sample, recent): up to ``sample_cap`` lines per source picked by entropy-greedy
         priority sampling from the 4x most recent, so one chatty source can't crowd out the
-        rest; and each source's ``sample_cap`` most recent lines, which reviewers' counts use."""
+        rest; each source's ``sample_cap`` most recent lines, which reviewers' counts use; and the
+        service of each of those."""
         cap = self.settings.sample_cap
         lines: list[str] = []
         pool: list[str] = []
+        services: list[str] = []
         for i, sid in enumerate(sids):
             src = self.sources[sid]
             recent = self.reads.source_lines(src["host"], src["service"], src["source"], cap * 4)
             lines += [recent[j] for j in sorted(entropy_greedy_sample(recent, cap))]
             pool += recent[-cap:]
+            services += [src["service"]] * len(recent[-cap:])
             progress(
                 start + (end - start) * (i + 1) / len(sids), f"sampled {src['service'] or sid}"
             )
-        return lines, pool
+        return lines, pool, services
 
     def _lines_path(self, batch_id: str) -> Path:
         return self.data_dir / "review" / f"{batch_id}.json"
@@ -878,7 +892,7 @@ class Server:
         sids = sources or [sid for sid, s in self.sources.items() if not s.get("alias_of")]
         if not sids:
             raise ValueError("no log sources yet: connect an agent and track some files first")
-        lines, pool = self._sample(sids, progress, 0.0, 0.3)
+        lines, pool, pool_services = self._sample(sids, progress, 0.0, 0.3)
         report: dict = {}
         adapter = _Traced(self.adapter, progress, 0.35, 0.88)
         progress(
@@ -953,7 +967,10 @@ class Server:
         path = self._lines_path(batch_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(pool), encoding="utf-8")
-        drafts = review.draft_docs(batch_id, templates, masks, pool)
+        drafts = review.draft_docs(batch_id, templates, masks, pool, pool_services)
+        if self.config.graph.enabled:
+            progress(0.92, "asking which components each template links to (one call per service)")
+            self._draft_edges(drafts, adapter, initial)
         for d in drafts:
             self.control.put("draft", d["id"], d)
         self.control.put(
@@ -989,6 +1006,42 @@ class Server:
             return "no new templates needed"
         self.events.notify()
         return f"{len(drafts)} templates ready for review"
+
+    def _draft_edges(self, drafts: list[dict], adapter, initial: bool) -> None:
+        """Each draft's proposed edges (``d["edges"]``, reviewed with the template): one LLM call
+        per service for its templates together. The first calibration's answers are cached next
+        to its templates (``draft_cache``), so a cached run asks nothing."""
+        path = Path(self.config.server.draft_cache or "") if initial else None
+        cache: dict = {}
+        if path and self.config.server.draft_cache and path.exists():
+            cache = json.loads(path.read_text(encoding="utf-8")).get("graph", {})
+        by_service: dict[str, list[dict]] = {}
+        for d in drafts:
+            if d["services"]:
+                by_service.setdefault(d["services"][0], []).append(d)
+        known = self.graph.known(self)
+        for service, ds in sorted(by_service.items()):
+            key = lambda d, s=service: f"{s}|{_template_text(d['tokens'], d['keys'])}"
+            todo = [d for d in ds if key(d) not in cache]
+            got = self.graph.propose(
+                adapter,
+                service,
+                [
+                    (d["id"], _template_text(d["tokens"], d["keys"]), (d["samples"] or [""])[0])
+                    for d in todo
+                ],
+                known,
+            )
+            for d in todo:
+                edges, by = got[d["id"]]
+                cache[key(d)] = {"edges": edges, "by": by}
+            for d in ds:
+                d["edges"], d["edges_by"] = cache[key(d)]["edges"], cache[key(d)]["by"]
+        if path and self.config.server.draft_cache and path.exists():
+            c = json.loads(path.read_text(encoding="utf-8"))
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(c | {"graph": cache}), encoding="utf-8")
+            tmp.replace(path)
 
     def batches(self, status: str = "review") -> list[dict]:
         out = []
@@ -1201,6 +1254,10 @@ class Server:
                 self.pipeline.handle.swap(self.registry.current)
         for d, tid in zip(approved, ids):
             self.control.update("draft", d["id"], template_id=tid)
+            if d.get("services") and "edges_by" in d:
+                self.graph.save_label(d["services"][0], tid, d["edges"], d["edges_by"])
+        if any("edges_by" in d for d in approved):
+            self.graph.rebuild(self)
         self._finish_batch(
             doc, ids, f"{len(ids)} templates added (registry v{self.registry.current.version})"
         )
@@ -2153,6 +2210,8 @@ class Server:
                 if self.dd_sync is not None:
                     self.dd_sync.tick(self)
                 self.volume.tick(self)
+                if self.config.graph.enabled:
+                    self.graph.tick(self)
             except Exception:
                 LOGGER.exception("housekeeping failed")
 
@@ -2160,6 +2219,7 @@ class Server:
         self._stop.set()
         self.persist()
         self.volume.save()
+        self.graph.store.close()
         with self.lock:
             self.pipeline.finish()
             if self.pipeline.queue is not None:

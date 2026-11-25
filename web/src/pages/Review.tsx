@@ -41,6 +41,11 @@ function DraftRow({ d, total, selected, onSelect }: {
           ) : (
             <>
               {d.rule_edited && <div className="small"><span className="muted">Rule:</span> <code>{d.rule}</code></div>}
+              {d.edges && d.edges.length > 0 && d.services?.[0] && (
+                <div className="small"><span className="muted">Links it shows (added to Topology on approval):</span>{" "}
+                  {d.edges.map((e) => <span key={e.target + e.relation} className="badge info">{d.services![0]} {e.relation.replace("_", " ")} {e.target}{e.status ? ` · ${e.status}` : ""}</span>)}
+                </div>
+              )}
               <div className="muted small">Example lines</div>
               {d.samples.length ? <div className="samples mono">{d.samples.map((s, i) => <div key={i}>{s}</div>)}</div>
                 : <div className="muted small">No recent line matches this template.</div>}

@@ -70,7 +70,7 @@ class Filters:
 
 # reads compiled for the log store, and reads of the server's own state
 LogTool = Literal["rows", "template_counts", "buckets", "aggregate"]
-LocalTool = Literal["agents", "alerts"]
+LocalTool = Literal["agents", "alerts", "graph"]
 Tool = LogTool | LocalTool
 
 
