@@ -94,6 +94,14 @@ reports. The runs used a Claude Code login, not an API key.
    the logs never name a callee. Even with the 11 true links entered by hand (`--true-links`)
    AC@1 stays 0.40, factor on or off: the lift applies to errors, warnings and new templates on a
    dependency, and the faulty `emailservice` logs none of those.
+7. **A graph from traces does help** (`--traces`, rules only): AC@1 0.40 → 0.70, Avg@5 0.56 →
+   0.83. The lift comes from the calls on each link, not the links themselves: with the call
+   factor off the score is unchanged. It fixes the 9 `emailservice` faults that stop its calls
+   (F1, F2, F5); F3/F4 leave calls looking normal, and in the `currencyservice` faults every
+   callee of checkout loses calls at once, so currency only reaches 3rd.
+   With Gemini it doesn't help: 0.90 without the graph, 0.80 with it, and the gap is within
+   run-to-run noise. The LLM reads the same faults from the error lines, and the lift sometimes
+   ranks a callee (redis) above the caller that broke (cart).
    [Component graph results](results.md#component-graph).
 
 !!! warning "Caveats"

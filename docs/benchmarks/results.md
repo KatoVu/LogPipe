@@ -180,9 +180,62 @@ reorders lower ranks in 15 cases but never changes the top answer: the root caus
 `emailservice` in 15 cases, and its lines during these faults are its usual info lines, not an
 error, a warning or a new template, so there's nothing on it to lift.
 
+**Links from traces** (`--traces`: the case's `traces.csv` fed through the same code as
+`POST /v1/traces`). Each span whose parent belongs to another service is one call. RCA reads the
+calls on each link in the window against the 10 minutes before. A link whose calls fell by
+half, ≥ 20 % failed or doubled in time is broken, and its callee goes above its caller
+(`LOGPIPE_RCA_CALL_WEIGHT`, 0.1).
+
+| graph (rules only, 30 cases) | AC@1 | AC@3 | AC@5 | Avg@5 |
+|---|---|---|---|---|
+| off | 0.40 | 0.40 | 1.00 | 0.56 |
+| from traces, factor off (in the bundle only) | 0.40 | 0.40 | 1.00 | 0.56 |
+| **from traces, factor on** | **0.70** | **0.80** | 1.00 | **0.83** |
+
+| fault | right first, factor off → on |
+|---|---|
+| emailservice F1, F2, F5 | 0/9 → 9/9: checkout's calls to email fall from ~160 to ~4 |
+| emailservice F3, F4 | 0/6 → 0/6: calls keep flowing at the usual rate and time, nothing to see |
+| currencyservice F1 | 0/3 → 0/3, now 3rd: checkout fails before it calls payment and email, so those calls fall too, at the same depth as currency |
+| adservice, cartservice | 12/12 → 12/12 |
+
+**The same with Gemini** (web chat, `--llm llm:web:gemini --label-with-rules`, 30 cases):
+
+| graph | AC@1 | AC@3 | AC@5 | Avg@5 | time per case |
+|---|---|---|---|---|---|
+| off | **0.90** | 0.93 | 1.00 | **0.95** | 137 s |
+| from traces, factor on | 0.80 | **0.97** | 1.00 | 0.93 | 157 s |
+
+With the LLM, the graph doesn't help. Gemini already reads the email and cart errors from the
+logs. The graph fixed one currency case (0010) but lost four:
+- **re3-ob-0007, cart:** the lift put `redis` above `cartservice`. Cart's calls to redis fell
+  because cart itself broke.
+- **re3-ob-0003, email:** the answer text names email, but checkout comes first in the ranks.
+- **re3-ob-0008, email:** a one-off card rejection was taken for the cause.
+- **re3-ob-0030, currency:** frontend came first.
+
+Four cases is within run-to-run noise: an earlier no-graph Gemini run scored 0.70 (above). The
+call factor still lifts the callee whichever end broke, and that is the next thing to fix.
+
+**Dependency questions on Online Boutique** (`--ob-questions re3-ob-0001`; 20 questions on
+the 10 services the traces and the task share; truth is the 11 known links):
+
+| | links found (precision / recall) | question F1 |
+|---|---|---|
+| Ask without the graph | — | 0.40 |
+| Ask with the graph from logs | 0 links | 0.40 |
+| **Ask with the graph from traces** | 1.0 / 0.64 | **0.83** |
+| Gemini alone, last 200 lines | — | 0.86 |
+
+The traces miss cart, shipping and ad, which send no spans of their own, so questions about
+them come back short. Gemini alone likely knows Online Boutique: it's a public demo, so 0.86
+is an upper bound, not a fair baseline.
+
 **Caveats.** The shop is small and names its backends plainly, so the rule baseline is already
-perfect there; on RE3-OB nothing is learnable from logs. The graph's measured gains are the
-dependency questions; RCA showed no gain on either set. The LLM-only baseline's prompt carries
+perfect there. On RE3-OB nothing is learnable from logs, but traces give the links and the
+calls on them. Dependency questions improve, and so does RCA without an LLM; with Gemini, RCA
+doesn't improve. The call factor's thresholds were
+set while looking at these 30 cases, so treat 0.70 as an optimistic fit. The LLM-only baseline's prompt carries
 wall-clock timestamps, so it can't be replayed; it was recorded once.
 
 ## Nightly gate baseline
