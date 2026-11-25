@@ -22,7 +22,7 @@ class Edge:
     dst: str
     relation: str = "depends_on"
     templates: tuple[int, ...] = ()  # the evidence: templates that show this link
-    by: str = "llm"  # llm | rules | manual
+    by: str = "llm"  # llm | rules | manual | traces
     status: tuple[str, ...] = ()  # what the evidence says about the link (timeout, refused, ...)
 
     @property

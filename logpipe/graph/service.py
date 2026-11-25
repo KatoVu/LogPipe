@@ -9,8 +9,11 @@
 * **Edges** are derived from all labels, the components known now and the person's edits
   (control doc ``graph_edit``: an edge added by hand, or one removed), and written to the store
   whole.
-* **Health** isn't stored: it's the evidence templates' lines and errors over a range, read
-  from the log store when someone looks.
+* **Calls** measured from traces (``graph.traces.CallLog``) are links too (control doc
+  ``graph_call``, ``by`` traces): where traces cover a pair they win over what the labels said,
+  whose templates stay as its evidence.
+* **Health** isn't stored: a traced link's calls and failed calls, else its evidence
+  templates' lines and errors, over a range, read when someone looks.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 from .label import RELATIONS, prompt_for, propose, resolve
 from .store import Edge, GraphStore
+from .traces import CallLog
 
 LABELLED_WITHIN = timedelta(days=1)
 ERRORS = [
@@ -42,6 +46,7 @@ class GraphService:
         self.control, self.store, self.batch = control, store, batch
         self._version: int | None = None
         self._lock = threading.Lock()
+        self.calls = CallLog()
         # labelling cost, for the Topology page and the benchmark
         self.stats = {"calls": 0, "templates": 0, "prompt_chars": 0, "seconds": 0.0}
 
@@ -122,6 +127,16 @@ class GraphService:
                     m["s"].add(e["status"])
                 if lab["by"] == "llm":
                     m["by"] = "llm"
+        for c in self.control.all("graph_call"):
+            src, dst = c["src"], c["dst"]
+            # measured beats inferred: the labels' links between the pair fold into this one
+            folded = [k for k, m in merged.items() if m["src"] == src and m["dst"] == dst]
+            m = {"src": src, "dst": dst, "relation": "depends_on", "t": set(), "s": set()}
+            for k in folded:
+                old = merged.pop(k)
+                m["t"] |= old["t"]
+                m["s"] |= old["s"]
+            merged[f"{src}>{dst}>depends_on"] = m | {"by": "traces"}
         for ed in self.control.all("graph_edit"):
             if ed["removed"]:
                 merged.pop(ed["id"], None)
@@ -179,8 +194,24 @@ class GraphService:
             n += len(items)
         return n
 
+    def save_calls(self) -> bool:
+        """Write the caller -> callee pairs traces showed for the first time; whether any."""
+        new = self.calls.take_new()
+        for src, dst in sorted(new):
+            key = f"{src}>{dst}"
+            self.control.put(
+                "graph_call",
+                key,
+                {"id": key, "src": src, "dst": dst, "at": datetime.now(UTC).isoformat()},
+            )
+        return bool(new)
+
     def tick(self, server) -> None:
-        """Called by the server's housekeeping: label what's new since the registry last moved."""
+        """Called by the server's housekeeping: label what's new since the registry last moved,
+        and add the pairs traces showed."""
+        if self.save_calls():
+            with self._lock:
+                self.rebuild(server)
         version = server.registry.current.version
         if version == self._version or not server.settings.calibrated:
             return
@@ -206,9 +237,13 @@ class GraphService:
         for e in self.store.edges():
             lines = sum(per[(e.src, t)][0] for t in e.templates)
             errors = sum(per[(e.src, t)][1] for t in e.templates)
-            edges.append(
-                e.to_dict() | {"lines": lines, "errors": errors, "health": health(lines, errors)}
-            )
+            d = e.to_dict() | {"lines": lines, "errors": errors}
+            if e.by == "traces":
+                c = self.calls.stats(e.src, e.dst, start, end)
+                d |= c | {"health": health(c["calls"], c["call_errors"])}
+            else:
+                d["health"] = health(lines, errors)
+            edges.append(d)
         names = self.known(server) | {e["src"] for e in edges} | {e["dst"] for e in edges}
         nodes = [
             {"id": n, "lines": svc[n][0], "errors": svc[n][1], "health": health(*svc[n])}

@@ -57,6 +57,7 @@ class Ctx:
     use_semantic: bool = True
     use_hints: bool = True
     graph: Any = None  # the component graph (logpipe.graph.store.GraphStore), None without one
+    calls: Any = None  # calls measured from traces (logpipe.graph.traces.CallLog)
     use_graph: bool = True
     # follow-up kinds the LLM may ask for; None: all of them
     moves: frozenset[str] | None = None
@@ -226,7 +227,11 @@ def execute(q: Query, ctx: Ctx) -> list[dict]:
         start, end = q.args["start"], q.args["end"]
         return [a for a in ctx.alerts(500) if a["window_end"] >= start and a["window_start"] <= end]
     if q.tool == "graph":
-        return graph_read(ctx, q.args["op"], q.args["nodes"], int(q.args.get("depth", 2)))
+        when = [
+            datetime.fromisoformat(q.args[k]) if q.args.get(k) else None
+            for k in ("start", "end", "at")
+        ]
+        return graph_read(ctx, q.args["op"], q.args["nodes"], int(q.args.get("depth", 2)), *when)
     raise ValueError(f"unknown local read {q.tool}")
 
 
@@ -239,9 +244,28 @@ GRAPH_OPS = {
 }
 
 
-def graph_read(ctx: Ctx, op: str, nodes: list[str], depth: int = 2) -> list[dict]:
+def graph_read(
+    ctx: Ctx,
+    op: str,
+    nodes: list[str],
+    depth: int = 2,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    at: datetime | None = None,
+) -> list[dict]:
     """Edges of the component graph: around a node (``downstream``, ``upstream``, ``around``, each
-    with the hops of its far end from ``nodes[0]``), or the ``path`` between two."""
+    with the hops of its far end from ``nodes[0]``), or the ``path`` between two. A traced edge
+    carries its calls over [at, end) against [start, at) (``at`` unset: [start, end) against
+    the window before)."""
+    edges = _graph_edges(ctx, op, nodes, depth)
+    if ctx.calls is not None and start and end:
+        for e in edges:
+            if e["by"] == "traces":
+                e |= ctx.calls.stats(e["src"], e["dst"], start, end, at)
+    return edges
+
+
+def _graph_edges(ctx: Ctx, op: str, nodes: list[str], depth: int) -> list[dict]:
     g = ctx.graph
     if g is None or op not in GRAPH_OPS:
         return []
@@ -284,6 +308,7 @@ def graph_round(spec: QuerySpec, ctx: Ctx, start: datetime, end: datetime) -> Ro
                 op=op,
                 nodes=nodes,
                 depth=6,
+                **span(start, end),
             ),
             log_read(
                 ctx,
@@ -320,6 +345,8 @@ def graph_table(done: Round, outputs: dict, ctx: Ctx) -> TableResult:
     for e in edges:
         lines = sum(per.get((e["src"], t), [0, 0])[0] for t in e["templates"])
         errors = sum(per.get((e["src"], t), [0, 0])[1] for t in e["templates"])
+        calls, failed = e.get("calls"), e.get("call_errors")
+        ok = health(calls, failed) if calls is not None else health(lines, errors)
         rows.append(
             [
                 e["src"],
@@ -328,12 +355,25 @@ def graph_table(done: Round, outputs: dict, ctx: Ctx) -> TableResult:
                 e["hops"],
                 lines,
                 errors,
-                health(lines, errors),
+                calls,
+                failed,
+                ok,
                 e["by"],
             ]
         )
     return TableResult(
-        columns=["from", "relation", "to", "hops", "lines", "errors", "health", "learned by"],
+        columns=[
+            "from",
+            "relation",
+            "to",
+            "hops",
+            "lines",
+            "errors",
+            "calls",
+            "failed calls",
+            "health",
+            "learned by",
+        ],
         rows=rows,
         compiled=done.queries[0].compiled,
     )

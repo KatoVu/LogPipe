@@ -6,7 +6,7 @@ import { GraphView, HEALTH_COLOR, reach, type GraphData, type GraphEdge, type He
 import { Card, Drawer, Empty, fmt, Loading, PageHead } from "../ui";
 
 const RELATIONS = ["depends_on", "sends_to", "writes_to", "reads_from"];
-const LEARNED = { llm: "the LLM, from the template", rules: "a rule: the template names it", manual: "added by hand" };
+const LEARNED = { llm: "the LLM, from the template", rules: "a rule: the template names it", manual: "added by hand", traces: "traces: measured calls" };
 
 export default function Topology() {
   const [range, minutes, setRange] = useRange("1h");
@@ -21,7 +21,7 @@ export default function Topology() {
   return (
     <>
       <PageHead title="Topology"
-        sub="Which service depends on which, learned from the log templates when each was made. A link's colour is how its own lines look in the range."
+        sub="Which service depends on which, learned from the log templates when each was made and from traces. A link's colour is how its calls, else its own lines, look in the range."
         actions={<TimeRange value={range} onChange={setRange} />} />
       <div className="dash">
         <Card title="Components" className="w-8"
@@ -52,7 +52,7 @@ export default function Topology() {
         </Card>
         <Card title="Links" className="w-8">
           <table>
-            <thead><tr><th>From</th><th>Relation</th><th>To</th><th>Seen as</th><th className="num">Lines</th><th className="num">Error/warn</th><th>Learned by</th></tr></thead>
+            <thead><tr><th>From</th><th>Relation</th><th>To</th><th>Seen as</th><th className="num">Lines</th><th className="num">Error/warn</th><th className="num">Calls</th><th className="num">Failed</th><th>Learned by</th></tr></thead>
             <tbody>
               {data.edges.map((e) => (
                 <tr key={e.id} className="clickable" onClick={() => setEdge(e)}>
@@ -60,6 +60,8 @@ export default function Topology() {
                   <td>{e.status.map((s) => <span key={s} className="badge">{s}</span>)}</td>
                   <td className="num">{fmt(e.lines)}</td>
                   <td className="num" style={{ color: e.errors ? HEALTH_COLOR[e.health ?? "idle"] : undefined }}>{fmt(e.errors)}</td>
+                  <td className="num">{e.calls != null ? fmt(e.calls) : "—"}</td>
+                  <td className="num" style={{ color: e.call_errors ? HEALTH_COLOR[e.health ?? "idle"] : undefined }}>{e.calls != null ? fmt(e.call_errors ?? 0) : "—"}</td>
                   <td className="muted">{e.by}</td>
                 </tr>
               ))}
@@ -104,7 +106,7 @@ function EdgeDrawer({ edge, range, onClose }: { edge: GraphEdge; range: string; 
     <Drawer onClose={onClose}>
       <h3>{edge.src} <span className="muted">{edge.relation.replace("_", " ")}</span> {edge.dst}</h3>
       <p className="muted">
-        Learned by {LEARNED[edge.by]}. In the range: {fmt(edge.lines)} lines, {fmt(edge.errors)} error/warn
+        Learned by {LEARNED[edge.by]}. In the range: {edge.calls != null && <>{fmt(edge.calls)} calls, {fmt(edge.call_errors ?? 0)} failed, {edge.ms ?? 0} ms mean · </>}{fmt(edge.lines)} lines, {fmt(edge.errors)} error/warn
         {edge.status.length > 0 && <> · seen as {edge.status.join(", ")}</>}.
       </p>
       <h4 className="graph-h">Evidence templates</h4>

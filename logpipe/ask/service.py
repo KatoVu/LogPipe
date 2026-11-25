@@ -106,6 +106,7 @@ class AskService:
             now=now or _now(),
             window=s.window,
             graph=s.graph.store if s.config.graph.enabled else None,
+            calls=s.graph.calls if s.config.graph.enabled else None,
             **flags,
         )
 

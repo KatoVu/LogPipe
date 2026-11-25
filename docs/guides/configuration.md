@@ -74,6 +74,7 @@ prefix, read once through `get_settings()`. `.env` is loaded by `make` (and `uv 
     | `FOLLOW_UPS` / `MOVES_PER_ROUND` / `MOVE_MAX_HOURS` | 4 / 3 / 24 | |
     | `HINT_MIN_RATIO` / `HINT_MIN_SHARE` / `MAX_HINTS` | 3.0 / 0.2 / 5 | value hints |
     | `GRAPH_WEIGHT` / `GRAPH_DEPTH` | 1.0 / 2 | [component graph](../architecture/graph.md): ranking factor, slice hops |
+    | `CALL_WEIGHT` | 0.1 | a broken [traced link](../architecture/graph.md#from-traces)'s callee goes this share above its caller |
 
 === "Component graph (`LOGPIPE_GRAPH_`, `NEO4J_`)"
 
