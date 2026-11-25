@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
 
@@ -106,9 +107,13 @@ def edge_scores(learned: set[tuple[str, str]], truth: set[tuple[str, str]]) -> d
 def ask_answer(world, question: str, **flags) -> set[str]:
     from ..ask.engine import run_unattended
     from ..ask.router import route
+    from ..enrich.llm import NeedsLLM
 
     server = world.server
-    routed = route(question, server.ask.catalog(), server.adapter).spec
+    try:
+        routed = route(question, server.ask.catalog(), server.adapter).spec
+    except NeedsLLM:  # a component it has never heard of, and no LLM to ask: no answer
+        return set()
     out = run_unattended(routed, server.ask.ctx(**flags))
     if out.get("kind") != "table":
         return set()
@@ -234,6 +239,63 @@ def rcaeval(out: Path) -> dict:
     return result
 
 
+def ob_questions(case: Path, llm=None) -> dict:
+    """Dependency questions on one RCAEval Online Boutique case, against its published
+    architecture: Ask with the graph its traces give, Ask with the graph its logs give (none:
+    they never name a callee), Ask without a graph, and the LLM reading the last 200 lines."""
+    from .rcaeval_bench import load_case
+
+    with utc_clock():
+        _, world = load_case(case, epochs=1)
+        server = world.server
+        task = json.loads((case / "task.json").read_text("utf-8"))
+        # every service of the case, also those that only show in traces (no logs of their own)
+        known = set(task["candidate_services"]) & ({n for e in OB_TRUTH for n in e})
+        truth_edges = {(a, b) for a, b in OB_TRUTH if a in known and b in known}
+        logs_only = {(e.src, e.dst) for e in server.graph.store.edges()}
+        rows = server.reads.between(
+            datetime.min.replace(tzinfo=UTC), datetime.max.replace(tzinfo=UTC), 1_000_000
+        )
+        last = [f"{r.get('service')}: {r['message']}" for r in rows[-200:]]
+        answers: dict = {}
+        for op, q in QUESTIONS.items():
+            for x in sorted(known):
+                answers[q.format(x=x)] = {
+                    "x": x,
+                    "truth": sorted(closure(truth_edges, x, down=op == "depends")),
+                    "ask+log graph": ask_answer(world, q.format(x=x)),
+                    "ask": ask_answer(world, q.format(x=x), use_graph=False),
+                }
+        from ..graph.traces import read_csv
+
+        read_csv(server.graph.calls, case / "traces.csv")
+        server.graph.save_calls()
+        server.graph.rebuild(server)
+        traced = {(e.src, e.dst) for e in server.graph.store.edges()}
+        for question, row in answers.items():
+            row["ask+trace graph"] = ask_answer(world, question)
+            if llm is not None:
+                prompt = LLM_ONLY.format(
+                    lines="\n".join(last), services=", ".join(sorted(known)), question=question
+                )
+                out = llm.ask(Components, prompt)
+                row["llm_only"] = {s for s in (out.services if out else []) if s in known}
+    variants = ["ask+trace graph", "ask+log graph", "ask", *(["llm_only"] if llm else [])]
+    for row in answers.values():
+        truth = set(row["truth"])
+        for v in variants:
+            row[v] = {"answer": sorted(row[v]), "f1": f1(row[v], truth)}
+    return {
+        "case": case.name,
+        "links": {
+            "traces": edge_scores(traced, truth_edges),
+            "logs": edge_scores(logs_only, truth_edges),
+        },
+        "question_f1": {v: round(mean(r[v]["f1"] for r in answers.values()), 3) for v in variants},
+        "questions": answers,
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="logpipe eval graph", description=__doc__)
     ap.add_argument("--out", type=Path, default=Path("artifacts/eval/graph.json"))
@@ -245,8 +307,22 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument(
         "--rcaeval", type=Path, help="score the graphs an rcaeval run learned (its OUT dir)"
     )
+    ap.add_argument(
+        "--ob-questions",
+        type=Path,
+        help="an RCAEval Online Boutique case dir: dependency questions, traces vs logs",
+    )
     args = ap.parse_args(argv)
-    result = rcaeval(args.rcaeval) if args.rcaeval else shop(args)
+    if args.ob_questions:
+        from ..enrich.llm import get_adapter
+
+        llm = None
+        if args.llm or args.replay:
+            record = args.replay or args.out.with_name("llm-replies.ob-questions.json")
+            llm = Recorded(record, None if args.replay else get_adapter(args.llm), reuse=True)
+        result = ob_questions(args.ob_questions, llm)
+    else:
+        result = rcaeval(args.rcaeval) if args.rcaeval else shop(args)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     print(json.dumps(result, indent=2, default=str)[:4000])

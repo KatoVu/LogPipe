@@ -762,7 +762,12 @@ def lift_broken_calls(cands: list[Candidate], edges: list[GraphRow], ctx: Ctx) -
     def best(svc: str) -> float:
         return max((c.score for c in cands if c.service == svc), default=0.0)
 
-    for e, why in sorted(bad, key=lambda b: b[0].hops):
+    # a caller's depth: the longest chain of callers above it, cycles cut after len(edges) passes
+    depth: dict[str, int] = {}
+    for _ in edges:
+        for e in edges:
+            depth[e.dst] = max(depth.get(e.dst, 0), depth.get(e.src, 0) + 1)
+    for e, why in sorted(bad, key=lambda b: (depth.get(b[0].src, 0), b[0].src, b[0].dst)):
         top, own = best(e.src), best(e.dst)
         if not top or not own or own > top:
             continue

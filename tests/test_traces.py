@@ -140,6 +140,14 @@ def test_broken_calls_put_the_callee_above_its_caller(env):  # noqa: F811
     lift_broken_calls(cands, edges, ctx)
     assert [c.service for c in cands] == ["email", "checkout", "frontend"]
     assert "calls fell 161 -> 4" in cands[0].why
+    # read as the whole graph (hops 0 everywhere): still callers first, so the deepest wins
+    chain = [cand("frontend", 0.5), cand("checkout", 0.2), cand("currency", 0.1)]
+    whole = [
+        GraphRow(src="checkout", dst="currency", by="traces", calls=100, base_calls=380, hops=0),
+        GraphRow(src="frontend", dst="checkout", by="traces", calls=100, call_errors=100, hops=0),
+    ]
+    lift_broken_calls(chain, whole, ctx)
+    assert [c.service for c in chain] == ["currency", "checkout", "frontend"]
     ctx.rca = ctx.rca.model_copy(update={"call_weight": 0})
     again = [cand("checkout", 0.44), cand("email", 0.05)]
     lift_broken_calls(again, edges, ctx)
@@ -179,6 +187,8 @@ def test_otlp_traces_endpoint_feeds_the_graph(env):  # noqa: F811
     )
     server.graph.tick(server)
     assert [(e.src, e.dst, e.by) for e in server.graph.store.edges()] == [("web", "api", "traces")]
+    # components only traces show can be asked about by name
+    assert {"web", "api"} <= server.ask.catalog().services
 
 
 def test_stats_split_at_the_anchor_scale_the_part_before():

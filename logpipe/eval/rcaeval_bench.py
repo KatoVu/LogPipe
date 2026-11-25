@@ -390,6 +390,11 @@ def main(argv: list[str] | None = None) -> None:
         "--traces", action="store_true", help="also learn links from each case's traces.csv"
     )
     ap.add_argument(
+        "--label-with-rules",
+        action="store_true",
+        help="with --llm: label templates with the rule baseline, the LLM only answers",
+    )
+    ap.add_argument(
         "--true-links",
         action="store_true",
         help="add Online Boutique's real links by hand on top of the learned ones",
@@ -439,7 +444,7 @@ def main(argv: list[str] | None = None) -> None:
     # the graph is labelled by the LLM when there is one, else by the rule baseline
     graph_llm = (
         Transcript(llm, logs / f"{args.tasks.name}.graph.llm.jsonl")
-        if args.via == "direct" and (args.llm or args.replay)
+        if args.via == "direct" and (args.llm or args.replay) and not args.label_with_rules
         else None
     )
     suffix = "" if not args.no_anchor else ".no_anchor"
