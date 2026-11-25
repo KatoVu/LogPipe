@@ -1,5 +1,9 @@
 # Deploying the landing page
 
+(For the platform itself, one server per tenant with their data hosted or kept at the client,
+see `topology.example.yaml`, `ansible/platform.yml` and
+[docs/guides/deploy.md](../docs/guides/deploy.md).)
+
 ```
 push to main (landing/ or deploy/) ─► build landing image ─► GHCR ─► ssh deploy@vps deploy.sh
                                                                         │

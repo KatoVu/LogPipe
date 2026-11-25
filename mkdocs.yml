@@ -92,5 +92,6 @@ nav:
       - Configuration: guides/configuration.md
       - Datadog: guides/datadog.md
       - MongoDB: guides/mongodb.md
+      - Deploying tenants: guides/deploy.md
       - Maintenance: guides/maintenance.md
       - CI / CD: ci.md

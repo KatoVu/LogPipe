@@ -25,6 +25,7 @@ flowchart LR
 | where rows go | `storage/base.py:LogStore` | `storage/__init__.py:open_store` | `--store`, `STORE` |
 | how the UI and Ask read them | `server/stores/base.py:StoreReads` + `Compiler` | `server/stores/__init__.py:reads_for` | the store's type |
 | the control plane | `server/control.py:DocSink` | `server/stores/__init__.py:docs_for` | the store's type |
+| where the store runs | `server/dataplane.py:RemoteStore` (any store, behind the client's dataplane) | `server/stores/__init__.py:_kind` | `--store remote` ([Deploying tenants](deploy.md)) |
 | the unresolved queue | `unresolved/base.py:UnresolvedQueue` | `unresolved/__init__.py:open_queue` | `--queue`, `QUEUE` |
 | the LLM for masks / keys / aliases / Ask | `enrich/llm.py:LLMAdapter` | `enrich/llm.py:get_adapter` | `--llm`, `LLM_BACKEND` |
 | a hosted chat vendor | `deepparse/providers/base.py:ChatProvider` | `deepparse/providers/registry.py` | `llm:<name>[:<model>]` |
