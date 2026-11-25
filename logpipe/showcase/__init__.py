@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -479,6 +480,7 @@ def _tour(
     if not token.startswith("lp_"):
         token = api("/api/keys", {"name": "showcase"})["token"]
         print("  created a key named 'showcase'")
+    _ship_traces(url, token, gen)
     logs = str((ROOT / "logs").resolve())
     q = shlex.quote
     run = [  # one line per flag, so it prints like the install command in the docs
@@ -690,6 +692,7 @@ def _tour(
             "with Java stack traces, nginx returns 502, Postgres runs out of connections.",
             f"Watch {B}Anomaly alerts{R}: LogBERT flags the API's broken order of events (sequence alerts).",
             f"{B}Maintenance{R} also lists the new error templates as 'new to a model', not as anomalies.",
+            f"On {B}Topology{R} the traced links nginx → shop-api → postgres turn red: their calls fail.",
         ],
     )
     before = len(api("/api/alerts")["alerts"])
@@ -905,6 +908,29 @@ ASK_QUESTION = "why did the shop break in the last 15 minutes?"
 GRAPH_QUESTION = "what breaks if postgres fails?"
 
 
+def _ship_traces(url: str, token: str, gen: ShopGenerator) -> None:
+    """Send the shop's spans to /v1/traces every few seconds, as an OTel SDK's exporter would."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(5)
+            if body := gen.take_traces():
+                req = urllib.request.Request(
+                    url + "/v1/traces",
+                    data=json.dumps(body).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token}",
+                    },
+                )
+                try:
+                    urllib.request.urlopen(req, timeout=10).close()
+                except OSError:
+                    pass  # the server is restarting or gone: the next batch tries again
+
+    threading.Thread(target=loop, daemon=True, name="showcase-traces").start()
+
+
 def _topology_act(t: Tour, api: Api) -> None:
     """The component graph learned with the templates, and a dependency question it answers."""
     t.act(
@@ -916,6 +942,8 @@ def _topology_act(t: Tour, api: Api) -> None:
             f"{B}Topology{R} draws those links. Click {B}postgres{R}: what breaks if it fails is outlined in red.",
             f"Click a link to see the templates it was learned from. Ask answers {B}{GRAPH_QUESTION}{R}",
             "from the graph, without reading any log line.",
+            "The shop also sends its traces to /v1/traces (as an OpenTelemetry SDK would): links learned",
+            f"by {B}traces{R} carry how many calls went over them and how many failed. In act 6 they turn red.",
         ],
     )
     t.wait(

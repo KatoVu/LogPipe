@@ -67,11 +67,12 @@ came from another service is one call, parent's service → its service; a clien
 database, cache or broker (`db.system`, `messaging.system`) is a call to its `peer.service` or
 `server.address`. Spans aren't stored: only per-minute calls, failed calls and mean time per pair
 (in memory, two days; the pairs themselves are kept as control docs `graph_call`).
+The showcase's shop sends its spans this way too, so its traced links fail in the incident act.
 
 - A traced link (`by: traces`) replaces what the labels said about the same pair; their templates
   stay as its evidence. A link removed by hand stays removed.
-- Its health is its failed calls, and Ask's tables and the RCA bundle show its calls against the
-  window before.
+- Its health is its failed calls, and Ask's tables and the RCA report show its calls against the
+  window before (the LLM's prompt doesn't carry them).
 - **RCA**: a traced link is *broken* when, after the anchor, its calls fell below half of what the
   window before made in the same time, a fifth or more failed, or they took twice as long. Its
   callee's candidates then go just above the caller's best (`LOGPIPE_RCA_CALL_WEIGHT`, 0.1: 10 %

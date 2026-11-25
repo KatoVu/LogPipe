@@ -246,6 +246,8 @@ class ShopGenerator:
         # "payment … authorized" reads "payment … approved" (same event, new wording)
         self.firmware = False
         self.orders = 0
+        self.spans: list[tuple[str, dict]] = []  # (service, OTLP span), for take_traces()
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -396,6 +398,54 @@ class ShopGenerator:
                 )
         return ev
 
+    def trace(self, now: datetime, incident: bool) -> None:
+        """The order's spans, as its services would export them over OTLP. No randomness, so the
+        log lines stay the ones recorded evals expect."""
+        t, n = int(now.timestamp() * 1e9), self.orders
+
+        def span(sid: int, parent: int, ms: float, error: bool = False, **attrs) -> dict:
+            return {
+                "spanId": f"{n:012x}{sid:04x}",
+                "parentSpanId": f"{n:012x}{parent:04x}" if parent else "",
+                "kind": 3 if attrs else 2,
+                "startTimeUnixNano": str(t),
+                "endTimeUnixNano": str(t + int(ms * 1e6)),
+                "status": {"code": 2 if error else 0},
+                "attributes": [{"key": k, "value": {"stringValue": v}} for k, v in attrs.items()],
+            }
+
+        db = {"db.system": "postgresql", "server.address": "postgres:5432"}
+        out = [
+            ("nginx", span(1, 0, 30_000 if incident else 120, incident)),
+            ("shop-api", span(2, 1, 30_000 if incident else 110, incident)),
+            ("shop-api", span(3, 2, 2, incident, **db)),
+        ]
+        if self.inventory and not incident:
+            out.append(("inventory", span(4, 2, 20)))
+        with self._lock:
+            self.spans = (self.spans + out)[-20_000:]
+
+    def take_traces(self) -> dict | None:
+        """The spans since the last call, as one OTLP ``ExportTraceServiceRequest`` (JSON)."""
+        with self._lock:
+            spans, self.spans = self.spans, []
+        if not spans:
+            return None
+        per: dict[str, list[dict]] = {}
+        for service, sp in spans:
+            per.setdefault(service, []).append(sp)
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": [{"key": "service.name", "value": {"stringValue": svc}}]
+                    },
+                    "scopeSpans": [{"spans": sps}],
+                }
+                for svc, sps in per.items()
+            ]
+        }
+
     def fault(self, mode: str, now: datetime, step: int) -> list[Event]:
         """What the services log ``step`` orders after fault ``mode`` started: step 0 carries the
         root cause; the steps after it the symptoms a person would see first (502s, failed orders)."""
@@ -504,7 +554,10 @@ class ShopGenerator:
 
     def _loop(self) -> None:
         while not self._stop.wait(1 / self.rate):
-            self.write(self.order(incident=time.monotonic() < self.incident_until))
+            incident = time.monotonic() < self.incident_until
+            self.write(self.order(incident=incident))
+            if self.topology:
+                self.trace(datetime.now(UTC), incident)
 
     def stop(self) -> None:
         self._stop.set()

@@ -210,3 +210,22 @@ def test_stats_split_at_the_anchor_scale_the_part_before():
     s = log.stats("checkout", "email", T0, T0 + timedelta(minutes=30), T0 + timedelta(minutes=20))
     assert (s["calls"], s["base_calls"]) == (10, 100)  # 200 over 20 min, scaled to 10 min
     assert broken(s) == "calls fell 100 -> 10"
+
+
+def test_showcase_shop_traces_give_its_links(tmp_path):
+    from logpipe.showcase.generator import ShopGenerator
+
+    gen = ShopGenerator(tmp_path, topology=True)
+    gen.trace(T0, incident=False)
+    gen.inventory = True
+    gen.trace(T0, incident=True)
+    gen.trace(T0, incident=False)
+    log = CallLog()
+    assert ingest(log, gen.take_traces()) == 10 and gen.take_traces() is None
+    assert sorted(log.pairs()) == [
+        ("nginx", "shop-api"),
+        ("shop-api", "inventory"),
+        ("shop-api", "postgres"),
+    ]
+    s = log.stats("shop-api", "postgres", T0, T0 + timedelta(minutes=1))
+    assert (s["calls"], s["call_errors"]) == (3, 1)
