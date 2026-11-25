@@ -305,6 +305,8 @@ class Server:
         self.config = get_settings()
         self.datadog = datadog or Datadog()
         self.store, self.control = store, control
+        # The rows live on the client's dataplane, and so must every line this server keeps.
+        self.residency = bool(getattr(store, "residency", False))
         self.reads = reads_for(store)
         self.metrics = Metrics(series_for(store))
         self.metric_rules = MetricRules(control)
@@ -476,6 +478,8 @@ class Server:
         return doc
 
     def ingest(self, events: list[dict]) -> int:
+        if getattr(self.store, "connected", True) is False:
+            raise Busy("the client's dataplane is not connected")
         if self.inbox.qsize() + len(events) > self.inbox.maxsize:
             raise Busy(f"{self.inbox.qsize()} events waiting")
         counted = []
@@ -851,12 +855,26 @@ class Server:
             )
         return lines, pool, services
 
-    def _lines_path(self, batch_id: str) -> Path:
-        return self.data_dir / "review" / f"{batch_id}.json"
+    def save_lines(self, kind: str, doc_id: str, value) -> None:
+        """Log lines kept for a while (a review batch's sample, Ask's query results): a file in
+        ``data_dir/<kind>/``, or with the client's dataplane a control doc on the client side,
+        so this host keeps no line."""
+        if self.residency:
+            self.control.put(f"{kind}_lines", doc_id, {"value": value})
+            return
+        path = self.data_dir / kind / f"{doc_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, default=str), encoding="utf-8")
+
+    def load_lines(self, kind: str, doc_id: str, default):
+        if self.residency:
+            doc = self.control.get(f"{kind}_lines", doc_id)
+            return doc["value"] if doc else default
+        path = self.data_dir / kind / f"{doc_id}.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
     def batch_lines(self, batch_id: str) -> list[str]:
-        path = self._lines_path(batch_id)
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        return self.load_lines("review", batch_id, [])
 
     def _masks(self, batch: dict) -> list[Mask]:
         return (
@@ -955,9 +973,7 @@ class Server:
             },
         )
         batch_id = uuid.uuid4().hex[:10]
-        path = self._lines_path(batch_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(pool), encoding="utf-8")
+        self.save_lines("review", batch_id, pool)
         drafts = review.draft_docs(batch_id, templates, masks, pool, pool_services)
         if self.config.graph.enabled:
             progress(0.92, "asking which components each template links to (one call per service)")

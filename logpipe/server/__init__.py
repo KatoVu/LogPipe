@@ -63,6 +63,31 @@ def setup_logging(data_dir: Path) -> Path:
     return log_file
 
 
+def residency_check(queue: str, datadog: bool) -> None:
+    """``--store remote`` promises the client that this host keeps none of their lines: refuse
+    the parts that would copy them elsewhere."""
+    if queue != "memory":
+        raise SystemExit("--store remote needs --queue memory: Kafka would keep lines on this host")
+    if datadog:
+        raise SystemExit(
+            "--store remote cannot run with Datadog (it would send lines and LLM prompts there): "
+            "unset DD_API_KEY and drop --datadog"
+        )
+    if get_settings().server.draft_cache:
+        raise SystemExit("--store remote cannot use LOGPIPE_DRAFT_CACHE: it saves sample lines")
+
+
+def _remote_store():
+    """The client's dataplane, once it has connected: the control docs load from it."""
+    from .dataplane import RemoteStore, Tunnel
+
+    cfg = get_settings().server
+    tunnel = Tunnel(cfg.dataplane_key or "", port=cfg.dataplane_port, timeout=cfg.dataplane_timeout)
+    print(f"[server] waiting for the client's dataplane on port {tunnel.port}", flush=True)
+    tunnel.wait_connected()
+    return RemoteStore(tunnel)
+
+
 def run(
     *,
     host: str,
@@ -90,8 +115,10 @@ def run(
     if dd_query and not (dd_settings.api_key and dd_settings.app_key):
         raise SystemExit("pulling Datadog logs needs DD_API_KEY and DD_APP_KEY in .env")
     dd = datadog or Datadog()
+    if store == "remote":
+        residency_check(queue, dd.enabled or bool(dd_settings.api_key))
     log_file = setup_logging(data_dir)
-    log_store = open_store(store)
+    log_store = _remote_store() if store == "remote" else open_store(store)
     control = ControlStore(docs_for(log_store))
     server = Server(
         log_store,

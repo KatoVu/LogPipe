@@ -11,7 +11,10 @@ from .base import FACETS, Compiler, StoreReads, level
 
 def _kind(store) -> str:
     from ...storage.memory import MemoryStore
+    from ..dataplane import RemoteStore
 
+    if isinstance(store, RemoteStore):  # first: it answers for the client's real store
+        return "remote"
     if isinstance(store, MemoryStore):
         return "memory"
     if type(store).__name__ == "MongoStore":
@@ -23,6 +26,8 @@ def _kind(store) -> str:
 
 def reads_for(store) -> StoreReads:
     kind = _kind(store)
+    if kind == "remote":
+        return store.reads()
     if kind == "memory":
         from .memory import MemoryReads
 
@@ -41,6 +46,10 @@ def series_for(store):
     from ..metrics import ClickHouseSeries, MemorySeries, MongoSeries
 
     kind = _kind(store)
+    if kind == "remote":
+        from ..dataplane import Remote
+
+        return Remote(store.tunnel, "series")
     if kind == "memory":
         return MemorySeries()
     return MongoSeries(store.db) if kind == "mongodb" else ClickHouseSeries(store.client)
@@ -49,6 +58,10 @@ def series_for(store):
 def docs_for(store):
     """The control plane's sink, or None to keep control docs in memory only."""
     kind = _kind(store)
+    if kind == "remote":
+        from ..dataplane import Remote
+
+        return Remote(store.tunnel, "docs")
     if kind == "memory":
         # shortcut: the memory store keeps control docs in memory too; agents, keys and models are lost on restart.
         return None

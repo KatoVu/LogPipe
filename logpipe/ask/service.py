@@ -9,12 +9,10 @@ tighten the setting, never loosen it). A plan waiting for approval expires after
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from pathlib import Path
 
 from ..progress import JobProgress
 from ..settings import get_settings
@@ -45,7 +43,6 @@ def _now() -> datetime:
 class AskService:
     def __init__(self, server):
         self.server = server
-        self.dir = Path(server.data_dir) / "ask"
         self.index = None  # built on first use (index_for)
         self._index_key: tuple | None = None
 
@@ -335,18 +332,12 @@ class AskService:
         )
         return self.shutdown_view()
 
-    def _outputs_path(self, plan_id: str) -> Path:
-        return self.dir / f"{plan_id}.json"
-
     def run(self, progress: JobProgress, plan_id: str, round_n: int, adapter=None) -> str:
         plan = self.get(plan_id)
         if plan["status"] != PlanStatus.APPROVED or plan["rounds"][-1]["n"] != round_n:
             raise ValueError(f"plan {plan_id} round {round_n} is not approved")
         spec = QuerySpec.model_validate(plan["spec"])
-        path = self._outputs_path(plan_id)
-        outputs: dict[str, list[dict]] = (
-            json.loads(path.read_text("utf-8")) if path.exists() else {}
-        )
+        outputs: dict[str, list[dict]] = self.server.load_lines("ask", plan_id, {})
         plan["status"] = PlanStatus.RUNNING
         self._put(plan)
 
@@ -356,7 +347,7 @@ class AskService:
 
         recorder = Recorder(adapter or self.server.adapter, plan.setdefault("llm_steps", []), save)
         try:
-            return self._run_rounds(progress, plan, spec, outputs, path, recorder)
+            return self._run_rounds(progress, plan, spec, outputs, recorder)
         except Exception as error:  # whatever broke, the plan says so instead of spinning forever
             self._fail(plan, f"{type(error).__name__}: {error}")
             raise
@@ -367,7 +358,6 @@ class AskService:
         plan: dict,
         spec: QuerySpec,
         outputs: dict,
-        path: Path,
         recorder: Recorder,
     ) -> str:
         rounds = 0
@@ -386,8 +376,7 @@ class AskService:
                 except (ValueError, PermissionError) as error:
                     q.status, q.error = QueryStatus.FAILED, str(error)
             current["queries"] = [asdict(q) for q in queries]
-            self.dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(outputs, default=str), "utf-8")
+            self.server.save_lines("ask", plan["id"], outputs)
             done = Round(current["n"], current["purpose"], queries)
             progress(0.9, "reading what came back")
             out = advance(spec, plan["state"], done, outputs, ctx)

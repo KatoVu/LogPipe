@@ -57,6 +57,20 @@ def env(tmp_path):
 
         store = MongoStore.from_env(database=f"logpipe_test_{uuid.uuid4().hex[:8]}")
         control = ControlStore(MongoDocs(store.db))
+    elif os.environ.get("STORE") == "remote":  # a memory store behind a dataplane
+        from logpipe.server.dataplane import RemoteStore, Tunnel, serve
+        from logpipe.server.stores import docs_for
+
+        tunnel, stop = Tunnel("k", host="127.0.0.1", port=0), threading.Event()
+        threading.Thread(
+            target=serve,
+            args=(f"ws://127.0.0.1:{tunnel.port}", "k", MemoryStore()),
+            kwargs={"stop": stop},
+            daemon=True,
+        ).start()
+        assert tunnel.wait_connected(10)
+        store = RemoteStore(tunnel)
+        control = ControlStore(docs_for(store))
     else:
         store, control = MemoryStore(), ControlStore()
     # one epoch: fast, the model's quality isn't tested here
@@ -75,6 +89,9 @@ def env(tmp_path):
     if mongo:
         store.db.client.drop_database(store.db.name)
         store.close()
+    if os.environ.get("STORE") == "remote":
+        store.close()
+        stop.set()
 
 
 def pump(server: Server) -> None:
