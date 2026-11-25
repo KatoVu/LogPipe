@@ -225,6 +225,14 @@ class GraphLink(_Model):
     lines: int = 0
     errors: int = 0
     by: str = "llm"
+    # traced links (by traces): calls and failed calls in the window, mean ms, and the window
+    # before; ``broken`` says how they changed, if they did
+    calls: int | None = None
+    call_errors: int = 0
+    ms: float = 0.0
+    base_calls: int = 0
+    base_ms: float = 0.0
+    broken: str | None = None
 
 
 class Report(_Model):

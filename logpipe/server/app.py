@@ -23,6 +23,7 @@ from fastapi.responses import (
 )
 
 from ..enrich.sql_guard import validate_sql
+from ..graph import traces
 from ..parsing.grok import compile_rule, rule_from_template
 from ..registry import UNK_TEMPLATE_ID
 from . import otlp
@@ -191,6 +192,21 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
         except Busy as error:  # OTLP clients retry 429 with backoff
             raise HTTPException(429, str(error)) from error
         # An empty ExportLogsServiceResponse in the request's encoding.
+        proto = ctype.split(";")[0].strip() == otlp.PROTOBUF
+        return Response(
+            b"" if proto else b"{}", media_type=otlp.PROTOBUF if proto else "application/json"
+        )
+
+    @app.post("/v1/traces")
+    async def otlp_traces(request: Request, key: Annotated[dict, Depends(agent_key)]) -> Response:
+        """OTLP/HTTP traces, JSON or protobuf: only who called whom is kept (calls, failures and
+        time per minute), for the component graph."""
+        raw = await body(request)
+        ctype = request.headers.get("content-type", "application/json")
+        try:
+            traces.ingest(server.graph.calls, traces.decode(raw, ctype))
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         proto = ctype.split(";")[0].strip() == otlp.PROTOBUF
         return Response(
             b"" if proto else b"{}", media_type=otlp.PROTOBUF if proto else "application/json"

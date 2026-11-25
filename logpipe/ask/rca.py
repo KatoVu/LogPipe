@@ -36,6 +36,7 @@ from statistics import median
 
 from pydantic import BaseModel
 
+from ..graph.traces import broken
 from .engine import Ctx, Outcome, Round, local, log_read, span
 from .hints import value_hints
 from .models import (
@@ -253,6 +254,10 @@ def evidence_round(
                 op="around" if svc else "all",
                 nodes=[svc] if svc else [],
                 depth=cfg.graph_depth,
+                # calls from the anchor to now against those before it in the window: measured,
+                # so cheap to read further than the lines
+                at=at.isoformat(),
+                **span(start, max(end, ctx.now)),
             )
         )
         queries.append(
@@ -619,7 +624,9 @@ def rank(
             )
         )
     cands.sort(key=lambda c: (-round(c.score, 2), c.first))
-    lift_dependencies(cands, rows_of(done, outputs, Around.GRAPH, GraphRow), anchor, ctx)
+    edges = rows_of(done, outputs, Around.GRAPH, GraphRow)
+    lift_dependencies(cands, edges, anchor, ctx)
+    lift_broken_calls(cands, edges, ctx)
     # precursors: new lines just before the strongest one
     if cands and cands[0].score >= cfg.strong:
         lead = cands[0]
@@ -692,6 +699,16 @@ class GraphRow(BaseModel):
     status: list[str] = []
     by: str = "llm"
     hops: int = 1
+    # traced links only: calls over the window, and over the window before it
+    calls: int | None = None
+    call_errors: int = 0
+    ms: float = 0.0
+    base_calls: int = 0
+    base_ms: float = 0.0
+
+    @property
+    def broken(self) -> str | None:
+        return broken(self.model_dump()) if self.calls is not None else None
 
 
 def depends_on(edges: list[GraphRow], service: str | None) -> dict[str, int]:
@@ -733,6 +750,31 @@ def lift_dependencies(
     cands.sort(key=lambda c: (-round(c.score, 2), c.first))
 
 
+def lift_broken_calls(cands: list[Candidate], edges: list[GraphRow], ctx: Ctx) -> None:
+    """A traced link whose calls broke puts its callee's candidates just above its caller's best
+    one: what the caller logs is the callee's symptom. Callers first, deepest callee last, so a
+    chain a -> b -> c ends with c on top."""
+    weight = ctx.rca.call_weight
+    bad = [(e, why) for e in edges if (why := e.broken)]
+    if not (weight and bad):
+        return
+
+    def best(svc: str) -> float:
+        return max((c.score for c in cands if c.service == svc), default=0.0)
+
+    for e, why in sorted(bad, key=lambda b: b[0].hops):
+        top, own = best(e.src), best(e.dst)
+        if not top or not own or own > top:
+            continue
+        factor = top * (1 + weight) / own
+        for c in cands:
+            if c.service == e.dst:
+                c.dependency = round(c.dependency * factor, 3)
+                c.score = round(c.score * factor, 4)
+                c.why += f"; {e.src} -> {e.dst}: {why}"
+    cands.sort(key=lambda c: (-round(c.score, 2), c.first))
+
+
 def graph_links(edges: list[GraphRow], done: Round, outputs: dict, ctx: Ctx) -> list[GraphLink]:
     """The graph slice as cited refs (G1, ...), each with its templates' lines and errors in the window."""
     per: dict[tuple, list[int]] = defaultdict(lambda: [0, 0])
@@ -750,6 +792,12 @@ def graph_links(edges: list[GraphRow], done: Round, outputs: dict, ctx: Ctx) -> 
             lines=sum(per[(e.src, t)][0] for t in e.templates),
             errors=sum(per[(e.src, t)][1] for t in e.templates),
             by=e.by,
+            calls=e.calls,
+            call_errors=e.call_errors,
+            ms=e.ms,
+            base_calls=e.base_calls,
+            base_ms=e.base_ms,
+            broken=e.broken,
         )
         for i, e in enumerate(edges, 1)
     ]

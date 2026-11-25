@@ -10,10 +10,13 @@ export interface GraphEdge {
   dst: string;
   relation: string;
   templates: number[];
-  by: "llm" | "rules" | "manual";
+  by: "llm" | "rules" | "manual" | "traces";
   status: string[];
   lines?: number;
   errors?: number;
+  calls?: number; // traced links: calls and failed calls in the range
+  call_errors?: number;
+  ms?: number;
   health?: Health;
   evidence?: { id: number; text: string }[];
 }
@@ -113,7 +116,7 @@ export function GraphView({ data, selected, onNode, onEdge, edgeLabel }: {
         const faded = selected && !(e.src === selected || e.dst === selected || (up!.has(e.src) && (up!.has(e.dst) || e.dst === selected)) || (down!.has(e.dst) && (down!.has(e.src) || e.src === selected)));
         return (
           <g key={e.id} className={`graph-edge${onEdge ? " clickable" : ""}`} opacity={faded ? 0.2 : 1} onClick={() => onEdge?.(e)}>
-            <title>{`${e.src} ${e.relation} ${e.dst}${e.status.length ? ` (${e.status.join(", ")})` : ""}: ${e.lines ?? 0} lines, ${e.errors ?? 0} error/warn`}</title>
+            <title>{`${e.src} ${e.relation} ${e.dst}${e.status.length ? ` (${e.status.join(", ")})` : ""}: ${e.calls != null ? `${e.calls} calls, ${e.call_errors ?? 0} failed` : `${e.lines ?? 0} lines, ${e.errors ?? 0} error/warn`}`}</title>
             <path d={`M ${x1} ${y1} ${bend} ${x2} ${y2}`} fill="none" stroke="transparent" strokeWidth={14} />
             <path d={`M ${x1} ${y1} ${bend} ${x2} ${y2}`} fill="none" stroke={HEALTH_COLOR[h]} strokeWidth={h === "error" ? 3 : 2}
               strokeDasharray={e.by === "manual" ? "6 4" : undefined} markerEnd={`url(#arrow-${h})`} />

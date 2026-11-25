@@ -58,6 +58,28 @@ error.
 Neo4j holds `(:Component {name})-[:LINK {relation, templates, by, status}]->(:Component)`. Every
 read is a fixed, parameterised Cypher statement (`graph/store.py`); the LLM never writes Cypher.
 
+## From traces
+
+Where services send OpenTelemetry traces (`POST /v1/traces`, OTLP JSON or protobuf, e.g. from a
+Collector's `otlphttp` exporter), links are **measured** instead of inferred: a span whose parent
+came from another service is one call, parent's service → its service; a client span to a
+database, cache or broker (`db.system`, `messaging.system`) is a call to its `peer.service` or
+`server.address`. Spans aren't stored: only per-minute calls, failed calls and mean time per pair
+(in memory, two days; the pairs themselves are kept as control docs `graph_call`).
+
+- A traced link (`by: traces`) replaces what the labels said about the same pair; their templates
+  stay as its evidence. A link removed by hand stays removed.
+- Its health is its failed calls, and Ask's tables and the RCA bundle show its calls against the
+  window before.
+- **RCA**: a traced link is *broken* when, after the anchor, its calls fell below half of what the
+  window before made in the same time, a fifth or more failed, or they took twice as long. Its
+  callee's candidates then go just above the caller's best (`LOGPIPE_RCA_CALL_WEIGHT`, 0.1: 10 %
+  above; 0 turns it off): the caller's errors are the callee's symptoms. A service that went
+  quiet logs nothing alarming, so only the calls show it.
+
+Logs stay the source for what traces can't see: software you can't instrument (nginx, a mail
+server, a database's own log) and anything that drops the trace header.
+
 ## Where it's used
 
 - **Topology page**: callers on the left, dependencies on the right, links coloured by health.
@@ -79,6 +101,7 @@ read is a fixed, parameterised Cypher statement (`graph/store.py`); the LLM neve
 | `LOGPIPE_GRAPH_BATCH` | 40 | templates per labelling call |
 | `LOGPIPE_RCA_GRAPH_WEIGHT` | 1.0 | 0 turns the ranking factor off |
 | `LOGPIPE_RCA_GRAPH_DEPTH` | 2 | hops in the bundle's slice |
+| `LOGPIPE_RCA_CALL_WEIGHT` | 0.1 | a broken traced link's callee goes this much above its caller; 0 turns it off |
 
 `docker compose --profile graph up -d neo4j` starts Neo4j (the server image has the driver).
 
@@ -87,8 +110,8 @@ read is a fixed, parameterised Cypher statement (`graph/store.py`); the LLM neve
 - A dependency no log line names is invisible: nginx shows its backend only if its log format
   has `$upstream_addr`. Add it by hand on the Topology page.
 - Links end at known services only; an external API (a payment gateway) is dropped.
-- Services whose logs never name a callee (Online Boutique) get no links at all; their
-  topology lives in traces.
+- Services whose logs never name a callee (Online Boutique) get no links from logs; send traces.
+- Call counts are in memory: a restart loses the last two days' (the links stay).
 - `graph.all()` reads the whole graph when the anchor has no service; fine for tens of services,
   capped at 60 links.
 

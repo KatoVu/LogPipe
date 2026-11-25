@@ -72,7 +72,12 @@ def read_logs(path: Path) -> list[tuple[datetime, str, str, str]]:
 
 
 def load_case(
-    case_dir: Path, adapter_factory=None, epochs: int = 4, graph_adapter=None, true_links=False
+    case_dir: Path,
+    adapter_factory=None,
+    epochs: int = 4,
+    graph_adapter=None,
+    true_links=False,
+    traces=False,
 ):
     """The case's task and a server that has read its logs: calibrated on the lines before the
     fault, then given the rest."""
@@ -106,6 +111,12 @@ def load_case(
     send(rows[split:])
     settle(server)
     learn_graph(server, graph_adapter, end=rows[-1][0] + timedelta(minutes=1))
+    if traces and (path := case_dir / task["files"].get("traces", "traces.csv")).exists():
+        from ..graph.traces import read_csv  # what an OTLP exporter would have sent /v1/traces
+
+        read_csv(server.graph.calls, path)
+        server.graph.save_calls()
+        server.graph.rebuild(server)
     if true_links:  # as if someone entered Online Boutique's architecture on the Topology page
         from .graph_eval import OB_TRUTH
 
@@ -376,6 +387,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-anchor", action="store_true", help="don't tell the RCA when it broke")
     ap.add_argument("--epochs", type=int, default=4)
     ap.add_argument(
+        "--traces", action="store_true", help="also learn links from each case's traces.csv"
+    )
+    ap.add_argument(
         "--true-links",
         action="store_true",
         help="add Online Boutique's real links by hand on top of the learned ones",
@@ -457,7 +471,11 @@ def main(argv: list[str] | None = None) -> None:
                 if graph_llm is not None:
                     graph_llm.case = case.name
                 _, world = load_case(
-                    case, epochs=args.epochs, graph_adapter=graph_llm, true_links=args.true_links
+                    case,
+                    epochs=args.epochs,
+                    graph_adapter=graph_llm,
+                    true_links=args.true_links,
+                    traces=args.traces,
                 )
                 append(
                     out_dir / f"graphs.{args.tasks.name}.{'llm' if graph_llm else 'rules'}.jsonl",

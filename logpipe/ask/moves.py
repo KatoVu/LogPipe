@@ -183,6 +183,7 @@ def move_round(n: int, moves: list[Move], ctx: Ctx, purpose: str) -> Round:
                     op=m.value,
                     nodes=m.services,
                     depth=3,
+                    **span(m.start, m.end),
                     move=m.kind,
                 )
             )
@@ -266,6 +267,12 @@ def absorb(report: Report, done: Round, outputs: dict[str, list[dict]], ctx: Ctx
                             status=e.status,
                             templates=e.templates,
                             by=e.by,
+                            calls=e.calls,
+                            call_errors=e.call_errors,
+                            ms=e.ms,
+                            base_calls=e.base_calls,
+                            base_ms=e.base_ms,
+                            broken=e.broken,
                         )
                     )
         elif q.tool == "rows":

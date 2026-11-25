@@ -190,6 +190,9 @@ class RcaSettings(BaseSettings):
     # multiplied by 1 + graph_weight / hops (a cause sits below its symptoms); 0 turns it off
     graph_weight: float = 1.0
     graph_depth: int = 2  # hops around the anchor's service the bundle's graph slice covers
+    # a traced link whose calls broke (fell, failed, slowed) lifts its callee just above its
+    # caller's best candidate, by this share: the caller's errors are the callee's symptoms
+    call_weight: float = 0.1
     # value hints: a host or extracted value carried by error lines far more often than by the others
     hint_min_ratio: float = 3.0  # share among errors / share among the other lines
     hint_min_share: float = 0.2  # of the error lines

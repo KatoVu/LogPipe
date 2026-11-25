@@ -390,6 +390,7 @@ VARIANTS: dict[str, dict] = {
     "no_graph": {"use_graph": False},
     # the graph slice in the bundle, but no dependency factor in the ranking
     "graph_no_factor": {"rca": RcaSettings(graph_weight=0)},
+    "no_call_factor": {"rca": RcaSettings(call_weight=0)},
 }
 
 

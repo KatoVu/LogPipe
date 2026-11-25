@@ -19,7 +19,7 @@ interface Cause { cause: string; confidence: string; reasoning: string; cites: s
 interface Moment { at: string; what: string; cites: string[] }
 interface Answer { summary: string; timeline: Moment[]; hypotheses: Cause[]; leads: Cause[]; insufficient_evidence: boolean; missing: string; next_steps: string[]; dropped: { section: string; text?: string | null }[]; by: "llm" | "rules"; note: string; llm_error?: string }
 interface Anchor { kind: string; at: string; service?: string | null; host?: string | null; why: string }
-interface GraphLink { ref: string; src: string; dst: string; relation: string; status: string[]; templates: number[]; lines: number; errors: number; by: string }
+interface GraphLink { ref: string; src: string; dst: string; relation: string; status: string[]; templates: number[]; lines: number; errors: number; by: string; calls?: number | null; call_errors?: number; broken?: string | null }
 interface Hint { ref: string; field: string; value: string; errors: number; error_share: number; other_share: number; ratio: number }
 interface Series { ref: string; service: string | null; what: string; start: string; step_seconds: number; counts: number[] }
 interface AiStep {
@@ -486,14 +486,15 @@ export function ReportView({ r }: { r: AskResult }) {
 function Links({ links }: { links: GraphLink[] }) {
   const { lit } = useContext(Lit);
   const names = [...new Set(links.flatMap((l) => [l.src, l.dst]))];
-  const health = (l: GraphLink): Health => (!l.lines ? "idle" : !l.errors ? "ok" : l.errors / l.lines < 0.2 ? "warn" : "error");
+  const share = (n: number, bad: number): Health => (!n ? "idle" : !bad ? "ok" : bad / n < 0.2 ? "warn" : "error");
+  const health = (l: GraphLink): Health => (l.broken ? "error" : l.calls != null ? share(l.calls, l.call_errors ?? 0) : share(l.lines, l.errors));
   const data = {
     nodes: names.map((id) => ({ id })),
     edges: links.map((l) => ({ id: l.ref, src: l.src, dst: l.dst, relation: l.relation, templates: l.templates, by: l.by as GraphEdge["by"], status: l.status, lines: l.lines, errors: l.errors, health: health(l) })),
   };
   return (
     <section className="stack" style={{ gap: 6 }}>
-      <h3 style={{ margin: 0 }}>Components <span className="muted small">what the anchor's service depends on and what depends on it; colour is each link's lines in the window</span></h3>
+      <h3 style={{ margin: 0 }}>Components <span className="muted small">what the anchor's service depends on and what depends on it; colour is each link's calls (traced), else its lines, in the window</span></h3>
       <div className="graph-wrap"><GraphView data={data} edgeLabel={(e) => e.id} /></div>
       <ul className="ask-hints">
         {links.map((l) => (
@@ -501,7 +502,7 @@ function Links({ links }: { links: GraphLink[] }) {
             <span className="ask-ref">{l.ref}</span>
             <span className="grow"><strong>{l.src}</strong> <span className="muted">{l.relation.replace("_", " ")}</span> <strong>{l.dst}</strong>
               {l.status.length > 0 && <span className="muted small"> · seen as {l.status.join(", ")}</span>}</span>
-            <span className="num small">{l.lines} lines, {l.errors} error/warn</span>
+            <span className="num small">{l.calls != null && <>{l.calls} calls, {l.call_errors ?? 0} failed{l.broken && <strong style={{ color: "var(--bad)" }}> · {l.broken}</strong>} · </>}{l.lines} lines, {l.errors} error/warn</span>
           </li>))}
       </ul>
     </section>
