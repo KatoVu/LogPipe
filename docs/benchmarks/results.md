@@ -127,6 +127,11 @@ this is a fit, not a held-out score. That's why the RCAEval results below matter
 | rules + Gemini (web) | 0.70 | 0.77 | 0.81 |
 | Claude Code over MCP, with `ask` | 0.87 | 0.87 | 0.88 |
 | Claude Code over MCP, raw tools | 0.90 | 0.90 | 0.90 |
+| rules + graph from traces (26 Nov) | 0.77 | 0.80 | 0.85 |
+| rules + graph from traces + Gemini (26 Nov) | 0.93 | 1.00 | 0.99 |
+
+The first four rows were run on 12 Nov, before `settle()` and later RCA changes; compare the
+26 Nov rows with the [component graph](#component-graph) runs of the same day, not with them.
 
 ## Component graph
 
@@ -186,36 +191,36 @@ calls on each link in the window against the 10 minutes before. A link whose cal
 half, ≥ 20 % failed or doubled in time is broken, and its callee goes above its caller
 (`LOGPIPE_RCA_CALL_WEIGHT`, 0.1).
 
+A failing caller (≥ 20 % of the calls *to* it fail) that stops calling something altogether
+never reached it, so that link lifts nothing.
+
 | graph (rules only, 30 cases) | AC@1 | AC@3 | AC@5 | Avg@5 |
 |---|---|---|---|---|
 | off | 0.40 | 0.40 | 1.00 | 0.56 |
 | from traces, factor off (in the bundle only) | 0.40 | 0.40 | 1.00 | 0.56 |
-| **from traces, factor on** | **0.70** | **0.80** | 1.00 | **0.83** |
+| **from traces, factor on** | **0.77** | **0.80** | 1.00 | **0.85** |
 
 | fault | right first, factor off → on |
 |---|---|
 | emailservice F1, F2, F5 | 0/9 → 9/9: checkout's calls to email fall from ~160 to ~4 |
 | emailservice F3, F4 | 0/6 → 0/6: calls keep flowing at the usual rate and time, nothing to see |
-| currencyservice F1 | 0/3 → 0/3, now 3rd: checkout fails before it calls payment and email, so those calls fall too, at the same depth as currency |
+| currencyservice F1 | 0/3 → 2/3: frontend's calls to checkout all fail; checkout still calls currency (385 → 100) but never reaches payment and email (→ 0) |
 | adservice, cartservice | 12/12 → 12/12 |
 
-**The same with Gemini** (web chat, `--llm llm:web:gemini --label-with-rules`, 30 cases):
+**The same with Gemini** (web chat, `--llm llm:web:gemini --label-with-rules`, 30 cases; per
+case, from the recorded prompts: tokens ≈ characters / 4):
 
-| graph | AC@1 | AC@3 | AC@5 | Avg@5 | time per case |
-|---|---|---|---|---|---|
-| off | **0.90** | 0.93 | 1.00 | **0.95** | 137 s |
-| from traces, factor on | 0.80 | **0.97** | 1.00 | 0.93 | 157 s |
+| graph | AC@1 | AC@3 | AC@5 | Avg@5 | tokens in / out | LLM time |
+|---|---|---|---|---|---|---|
+| off | 0.90 | 0.93 | 1.00 | 0.95 | 13.1k / 4.3k | 69 s |
+| from traces, also in the prompt (first try) | 0.80 | 0.97 | 1.00 | 0.93 | 15.6k / 4.3k | 82 s |
+| **from traces, ranking only** (now) | **0.93** | **1.00** | 1.00 | **0.99** | 13.0k / 4.6k | 38 s |
 
-With the LLM, the graph doesn't help. Gemini already reads the email and cart errors from the
-logs. The graph fixed one currency case (0010) but lost four:
-- **re3-ob-0007, cart:** the lift put `redis` above `cartservice`. Cart's calls to redis fell
-  because cart itself broke.
-- **re3-ob-0003, email:** the answer text names email, but checkout comes first in the ranks.
-- **re3-ob-0008, email:** a one-off card rejection was taken for the cause.
-- **re3-ob-0030, currency:** frontend came first.
-
-Four cases is within run-to-run noise: an earlier no-graph Gemini run scored 0.70 (above). The
-call factor still lifts the callee whichever end broke, and that is the next thing to fix.
+In the prompt, the graph slice cost ~2.2k tokens a case and Gemini sometimes followed a link to
+the wrong service (`redis` above `cartservice` in 0007, from a link learned from the logs). Now
+the graph only reorders the evidence, as without an LLM, and the prompt is the no-graph one's
+size. The 3-case gain over no graph is within run-to-run noise: web Gemini picks its own model,
+and an earlier no-graph run (12 Nov, older code, above) scored 0.70.
 
 **Dependency questions on Online Boutique** (`--ob-questions re3-ob-0001`; 20 questions on
 the 10 services the traces and the task share; truth is the 11 known links):
@@ -233,9 +238,9 @@ is an upper bound, not a fair baseline.
 
 **Caveats.** The shop is small and names its backends plainly, so the rule baseline is already
 perfect there. On RE3-OB nothing is learnable from logs, but traces give the links and the
-calls on them. Dependency questions improve, and so does RCA without an LLM; with Gemini, RCA
-doesn't improve. The call factor's thresholds were
-set while looking at these 30 cases, so treat 0.70 as an optimistic fit. The LLM-only baseline's prompt carries
+calls on them. Dependency questions and RCA improve; with Gemini the gain is small and within noise. The
+call factor's thresholds and the failing-caller rule were set while looking at these 30 cases,
+so treat 0.77 as an optimistic fit: RE3-TT and RE2 are the held-out check. The LLM-only baseline's prompt carries
 wall-clock timestamps, so it can't be replayed; it was recorded once.
 
 ## Nightly gate baseline

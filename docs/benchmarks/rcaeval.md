@@ -59,6 +59,10 @@ cause services: `emailservice` 15, `adservice` 9, `cartservice` 3, `currencyserv
 | **Claude Code + MCP, with `ask`** | **0.87** | 0.87 | 0.90 | **0.88** | 0.64 | 122 s | $0.23 (235k in / 1.4k out tokens, 9 tool calls) |
 | **Claude Code + MCP, raw tools** | **0.90** | 0.90 | 0.90 | **0.90** | 0.66 | 118 s | $0.22 (221k in / 1.4k out, 8.7 tool calls) |
 
+Rerun on 26 Nov with the current code and the [graph from traces](results.md#component-graph):
+rules only 0.77 AC@1 (0.40 without the graph), rules + Gemini 0.93 (0.90 without). The table
+above is from before `settle()` and those changes, so its rows don't compare with these.
+
 Chance@5 is 0.24 for every setup. The Claude Code cost is the API-price figure Claude Code
 reports. The runs used a Claude Code login, not an API key.
 
@@ -94,14 +98,13 @@ reports. The runs used a Claude Code login, not an API key.
    the logs never name a callee. Even with the 11 true links entered by hand (`--true-links`)
    AC@1 stays 0.40, factor on or off: the lift applies to errors, warnings and new templates on a
    dependency, and the faulty `emailservice` logs none of those.
-7. **A graph from traces does help** (`--traces`, rules only): AC@1 0.40 → 0.70, Avg@5 0.56 →
-   0.83. The lift comes from the calls on each link, not the links themselves: with the call
-   factor off the score is unchanged. It fixes the 9 `emailservice` faults that stop its calls
-   (F1, F2, F5); F3/F4 leave calls looking normal, and in the `currencyservice` faults every
-   callee of checkout loses calls at once, so currency only reaches 3rd.
-   With Gemini it doesn't help: 0.90 without the graph, 0.80 with it, and the gap is within
-   run-to-run noise. The LLM reads the same faults from the error lines, and the lift sometimes
-   ranks a callee (redis) above the caller that broke (cart).
+7. **A graph from traces does help** (`--traces`): rules only, AC@1 0.40 → 0.77 and Avg@5
+   0.56 → 0.85. The lift comes from the calls on each link, not the links themselves: with the
+   call factor off the score is unchanged. It fixes the 9 `emailservice` faults that stop its
+   calls (F1, F2, F5) and 2 of 3 `currencyservice` faults; F3/F4 leave calls looking normal.
+   With Gemini, AC@1 0.90 → 0.93 (within noise) at the same token count, because the graph
+   reorders the evidence but isn't put in the prompt: in the prompt it cost ~2.2k tokens a case
+   and scored 0.80.
    [Component graph results](results.md#component-graph).
 
 !!! warning "Caveats"
