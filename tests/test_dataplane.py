@@ -159,6 +159,12 @@ def test_without_the_dataplane_reads_fail_fast_and_intake_says_busy(plane, tmp_p
         remote.count_by_status()
     with pytest.raises(Busy, match="dataplane"):
         server.ingest([{"message": "hello", "host": "h"}])
+    from fastapi.testclient import TestClient
+
+    from logpipe.server.app import create_app
+
+    page = TestClient(create_app(server)).get("/api/logs", params={"limit": 1})
+    assert page.status_code == 503 and "unreachable" in page.json()["detail"]
 
 
 @pytest.fixture

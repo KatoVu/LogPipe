@@ -1,0 +1,65 @@
+#Runs the logpipe platform rendered by `logpipe deploy render` (deploy/out/hosted) on the VPS:
+#one server per tenant (and a ClickHouse for each hosted-residency tenant) behind the shared
+#Traefik. Run playbook.yml first: it installs Docker and Traefik. Idempotent; re-run after
+#every render.
+#
+#  logpipe deploy render deploy/topology.yaml --out deploy/out
+#  ansible-playbook -i inventory.ini platform.yml
+#
+#Client-residency tenants also need their deploy/out/client-<tenant>/ dir, handed to the
+#client and started there with `docker compose up -d`; this playbook never touches their side.
+
+- name: Run the rendered logpipe platform
+  hosts: logpipe
+  become: true
+
+  vars:
+    platform_dir: /opt/logpipe-platform
+    rendered_dir: "{{ playbook_dir }}/../out/hosted"
+
+  tasks:
+    - name: Check the render exists
+      delegate_to: localhost
+      become: false
+      ansible.builtin.stat:
+        path: "{{ rendered_dir }}/docker-compose.yml"
+      register: rendered
+      failed_when: not rendered.stat.exists
+
+    - name: Check Traefik is running (playbook.yml installs it)
+      ansible.builtin.command: docker inspect -f '{{ "{{.State.Running}}" }}' traefik
+      register: traefik
+      changed_when: false
+      failed_when: traefik.stdout != "true"
+
+    - name: Create the platform directory
+      ansible.builtin.file:
+        path: "{{ platform_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy the compose file
+      ansible.builtin.copy:
+        src: "{{ rendered_dir }}/docker-compose.yml"
+        dest: "{{ platform_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Copy the ClickHouse init script (only rendered when a tenant's data is hosted)
+      ansible.builtin.copy:
+        src: "{{ rendered_dir }}/clickhouse-init.sh"
+        dest: "{{ platform_dir }}/clickhouse-init.sh"
+        mode: "0755"
+      when: lookup('ansible.builtin.fileglob', rendered_dir + '/clickhouse-init.sh') | length > 0
+
+    - name: Copy the secrets
+      ansible.builtin.copy:
+        src: "{{ rendered_dir }}/.env"
+        dest: "{{ platform_dir }}/.env"
+        mode: "0600"
+
+    - name: Pull and start
+      ansible.builtin.command: docker compose up -d --pull always --remove-orphans
+      args:
+        chdir: "{{ platform_dir }}"
+      register: up
+      changed_when: "'Started' in up.stderr or 'Recreated' in up.stderr"

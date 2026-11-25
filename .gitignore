@@ -39,3 +39,6 @@ agent/logpipe-agent
 
 # MkDocs build output
 site/
+
+# `logpipe deploy render` output: compose files, .env and generated secrets
+deploy/out/

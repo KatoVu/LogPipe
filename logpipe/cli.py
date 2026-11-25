@@ -299,6 +299,17 @@ def _dataplane(args: argparse.Namespace) -> None:
     serve(args.server, key, open_store(args.store))
 
 
+def _deploy_render(args: argparse.Namespace) -> None:
+    from .deploy import load, render
+
+    try:
+        topo = load(args.topology)
+    except ValueError as error:
+        raise SystemExit(f"{args.topology}: {error}") from error
+    for path in render(topo, args.out):
+        print(path)
+
+
 def _start(args: argparse.Namespace) -> None:
     from .start import start
 
@@ -522,6 +533,13 @@ def main(argv: list[str] | None = None) -> None:
         default=settings.app.store if settings.app.store != "remote" else "clickhouse",
     )
     dp.set_defaults(func=_dataplane)
+
+    dep = sub.add_parser("deploy", help="render each host's compose files from a topology")
+    deps = dep.add_subparsers(dest="deploy_cmd", required=True)
+    rnd = deps.add_parser("render", help="topology.yaml -> hosted/ and client-<tenant>/ dirs")
+    rnd.add_argument("topology", type=Path)
+    rnd.add_argument("--out", type=Path, default=Path("deploy/out"))
+    rnd.set_defaults(func=_deploy_render)
 
     sc = sub.add_parser(
         "showcase", help="guided tour: server, a web shop's logs, an agent, every feature"

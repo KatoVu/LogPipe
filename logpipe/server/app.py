@@ -161,6 +161,12 @@ def create_app(server: Server, info: dict | None = None) -> FastAPI:
     async def bad_request(_request, exc: ValueError):
         return JSONResponse({"detail": str(exc)}, 400)
 
+    from .dataplane import DataplaneDown
+
+    @app.exception_handler(DataplaneDown)
+    async def dataplane_down(_request, exc: DataplaneDown):
+        return JSONResponse({"detail": f"the client's data is unreachable: {exc}"}, 503)
+
     @app.get("/intake/v1/ping")
     def ping(key: Annotated[dict, Depends(agent_key)]) -> dict:
         return {"ok": True, "key": key["name"]}

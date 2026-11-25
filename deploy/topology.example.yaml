@@ -1,0 +1,21 @@
+# One file for every host: `logpipe deploy render deploy/topology.example.yaml --out deploy/out`
+# writes deploy/out/hosted/ (the VPS) and deploy/out/client-<tenant>/ (to hand to that client).
+# Each tenant is served at https://<tenant>.<domain> behind the Traefik from deploy/ansible.
+
+domain: logpipe.example.com
+images: ghcr.io/katovu      # where logpipe-server is pulled from
+tag: latest
+
+tenants:
+  # Everything on the VPS: the server and a ClickHouse for this tenant.
+  demo:
+    residency: hosted
+    llm: offline
+    components: [parse, store, detect, graph]
+
+  # Data residency: the rows, review samples and settings stay on the client's network.
+  # The client runs client-acme/ (a ClickHouse and `logpipe dataplane`), which only dials out.
+  acme:
+    residency: client
+    llm: llm:anthropic      # put ANTHROPIC_API_KEY in hosted/.env
+    components: [parse, store, detect, enrich, graph]
