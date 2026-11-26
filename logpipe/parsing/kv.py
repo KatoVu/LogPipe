@@ -3,11 +3,15 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+import regex
+
 SLOT_RE = re.compile(r"<\*>|<VAR:([A-Z0-9]+)>")
 _KEY_PREFIX_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.\-]*)[=:]$")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _GENERIC_KEY_RE = re.compile(r"^var(_\d+)?$")
 _INLINE_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.\-]*)=(.*)$", re.DOTALL)
+# a template with many <VAR> slots can backtrack for hours on a line it doesn't fit
+EXTRACT_TIMEOUT = 0.1
 
 
 def slot_labels(tokens: Sequence[str]) -> list[str | None]:
@@ -51,7 +55,7 @@ def default_keys(tokens: Sequence[str]) -> list[str]:
     return unique
 
 
-def compile_extractor(tokens: Sequence[str]) -> re.Pattern[str]:
+def compile_extractor(tokens: Sequence[str]) -> regex.Pattern[str]:
     parts: list[str] = []
     for tok in tokens:
         piece: list[str] = []
@@ -62,17 +66,15 @@ def compile_extractor(tokens: Sequence[str]) -> re.Pattern[str]:
             last = match.end()
         piece.append(re.escape(tok[last:]))
         parts.append("".join(piece))
-    return re.compile(r"^\s*" + r"\s+".join(parts) + r"\s*$", re.DOTALL)
+    return regex.compile(r"^\s*" + r"\s+".join(parts) + r"\s*$", regex.DOTALL)
 
 
-def extract(pattern: re.Pattern[str], keys: Sequence[str], line: str) -> dict[str, str] | None:
+def extract(pattern: regex.Pattern[str], keys: Sequence[str], line: str) -> dict[str, str] | None:
     """Return ``{key: value}`` for ``line``, or ``None`` if it does not fit the template."""
-    match = pattern.fullmatch(line)
-
-    if match is None:
+    try:
+        match = pattern.fullmatch(line, timeout=EXTRACT_TIMEOUT)
+    except TimeoutError:
         return None
-
-    match = pattern.fullmatch(line)
 
     if match is None:
         return None
