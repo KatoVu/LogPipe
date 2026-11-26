@@ -3,6 +3,9 @@
 One file describes every host. `logpipe deploy render` turns it into the compose files and
 `.env` each host runs, and `deploy/ansible/platform.yml` starts the hosted side.
 
+To try the split on one machine first, `logpipe start` (or `logpipe showcase`) → *server* →
+*at the client* runs `server --store remote` with a `logpipe dataplane` beside it.
+
 ```mermaid
 flowchart LR
     subgraph client[client network: dials out only]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -137,16 +138,33 @@ def ask_setup(saved: dict, mode: str | None = None) -> dict:
         ],
         saved.get("mode"),
     )
-    a["queue"] = choose(
-        "Unresolved queue (lines no template matched wait here to be learned)?",
-        [
-            ("memory", "in-process, nothing to install (straightforward)"),
-            ("kafka", "Kafka broker in Docker, started for you"),
-        ],
-        saved.get("queue", "kafka"),
-    )
+    if a["mode"] == "server":
+        a["residency"] = choose(
+            "Where do the client's logs live?",
+            [
+                ("here", "in the server's own store (one VPS)"),
+                (
+                    "client",
+                    "at the client: the server keeps no line, `logpipe dataplane` holds the store",
+                ),
+            ],
+            saved.get("residency", "here"),
+        )
+    if a.get("residency") == "client":
+        a["queue"] = "memory"  # Kafka would copy lines off the client
+        print("  queue: memory (Kafka would keep the client's lines on the server side)")
+    else:
+        a["queue"] = choose(
+            "Unresolved queue (lines no template matched wait here to be learned)?",
+            [
+                ("memory", "in-process, nothing to install (straightforward)"),
+                ("kafka", "Kafka broker in Docker, started for you"),
+            ],
+            saved.get("queue", "kafka"),
+        )
     a["store"] = choose(
-        "Where do parsed rows go?",
+        "Where do parsed rows go?"
+        + (" (the client's store, behind the dataplane)" if a.get("residency") == "client" else ""),
         [
             (
                 "memory",
@@ -233,7 +251,7 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
             "--queue",
             a["queue"],
             "--store",
-            a["store"],
+            "remote" if a.get("residency") == "client" else a["store"],
             "--port",
             str(a["server_port"]),
             "--data-dir",
@@ -267,6 +285,30 @@ def plan(a: dict) -> tuple[list[str], list[list[str]]]:
         ]
     )
     return services, commands
+
+
+def dataplane(a: dict) -> list[str] | None:
+    """The client side to run beside ``server --store remote``, or None when the data is here."""
+    if a.get("residency") != "client":
+        return None
+    port = get_settings().server.dataplane_port
+    return ["dataplane", "--server", f"ws://127.0.0.1:{port}", "--store", a["store"]]
+
+
+def spawn(cmd: list[str], env: dict | None = None, **kwargs) -> subprocess.Popen:
+    """``logpipe <cmd>`` as a child process (it reads its settings from ``env``)."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "from logpipe.cli import main; main()", *cmd],
+        env=env if env is not None else os.environ.copy(),
+        **kwargs,
+    )
+
+
+def dataplane_key() -> str:
+    """The key both sides share: LOGPIPE_DATAPLANE_KEY, or a fresh one for this run."""
+    key = os.environ.setdefault("LOGPIPE_DATAPLANE_KEY", secrets.token_urlsafe(24))
+    get_settings.cache_clear()
+    return key
 
 
 def docker_up(services: list[str], run: Callable = subprocess.run) -> None:
@@ -310,6 +352,9 @@ def start(
         print(f"  docker compose up -d --wait {' '.join(services)}")
     if a["llm_kind"] == "web":
         print(f"  with WEB_BROWSER={a['browser']}")
+    client = dataplane(a)
+    if client:
+        print("  logpipe " + " ".join(client) + "   (in the background)")
     for cmd in commands:
         print("  logpipe " + " ".join(cmd))
     if a["llm_kind"] == "api" and not any(os.environ.get(k) for k in API_KEY_ENV[a["provider"]]):
@@ -362,6 +407,16 @@ def start(
         get_settings.cache_clear()
     if launch is None:
         from .cli import main as launch
-    for cmd in commands:
-        print(f"\n$ logpipe {' '.join(cmd)}")
-        launch(cmd)
+    side = None
+    if client:
+        dataplane_key()
+        print(f"\n$ logpipe {' '.join(client)}   (the client's side)")
+        side = spawn(client)
+    try:
+        for cmd in commands:
+            print(f"\n$ logpipe {' '.join(cmd)}")
+            launch(cmd)
+    finally:
+        if side:
+            side.terminate()
+            side.wait(10)
