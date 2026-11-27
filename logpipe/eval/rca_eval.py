@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -141,6 +142,22 @@ def make_server(data_dir: Path, adapter_factory=None, epochs: int = 4):
         min_train_steps=0,
     )
     return server, TestClient(create_app(server))
+
+
+def release(server) -> None:
+    """Free a server made by ``make_server`` before the next. FastAPI's callable caches (4096
+    entries, module-wide) keep every app's endpoints, and through their closures the server with
+    all its lines: about 25 cases' worth, 13 GB on RE2-TT."""
+    from fastapi.dependencies import models
+
+    for name in (
+        "_is_gen_callable_cached",
+        "_is_async_gen_callable_cached",
+        "_is_coroutine_callable_cached",
+    ):
+        if cached := getattr(models, name, None):
+            cached.cache_clear()
+    shutil.rmtree(server.data_dir, ignore_errors=True)
 
 
 def settle(server, max_cycles: int = 10) -> None:

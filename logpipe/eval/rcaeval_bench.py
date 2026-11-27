@@ -41,6 +41,7 @@ from .rca_eval import (
     investigate,
     learn_graph,
     make_server,
+    release,
     settle,
     utc_clock,
 )
@@ -523,6 +524,9 @@ def main(argv: list[str] | None = None) -> None:
                     f"{bar(done, runs, began)}  {case.name} {name}: {shown} ({wall:.0f} s)",
                     flush=True,
                 )
+            if world is not None:
+                release(world.server)
+                world = None
     for name, p in paths.items():
         bad = sum(failed(v) for v in preds[name].values())
         print(f"{p}" + (f"  ({bad} failed: rerun to retry them)" if bad else ""))

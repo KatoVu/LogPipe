@@ -146,3 +146,19 @@ def test_recorded_reuses_a_saved_reply_unless_fresh(tmp_path):
     assert calls == ["a"]
     Recorded(path, Counting()).ask(Reply, "a")
     assert calls == ["a", "a"]
+
+
+def test_a_released_server_is_freed(tmp_path):
+    import gc
+
+    from logpipe.eval.rca_eval import make_server, release
+    from logpipe.server.core import Server
+
+    for i in range(3):
+        server, client = make_server(tmp_path / str(i))
+        release(server)
+    del server, client
+    gc.collect()
+    # a module-wide cache in FastAPI kept the last ~25 apps, each with its case's lines
+    assert not [o for o in gc.get_objects() if isinstance(o, Server)]
+    assert not list(tmp_path.iterdir())
