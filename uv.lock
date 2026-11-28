@@ -1603,6 +1603,7 @@ dependencies = [
     { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -1644,6 +1645,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.15.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "uvicorn", specifier = ">=0.32" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 provides-extras = ["datadog"]
 

@@ -8,6 +8,8 @@
 |---|---|---|
 | `start` | asks what to run, starts services, runs it | — |
 | `server` | agent intake + operator UI + learning lifecycle + MCP | `--store`, `--queue`, `--llm`, `--data-dir`, `--epochs`, `--host`, `--port` |
+| `dataplane` | client side of `server --store remote`: keeps the rows on the client's network, dials out ([Deploying tenants](../guides/deploy.md)) | `--server`, `--store` |
+| `deploy render` | a topology file → each host's compose files and `.env` | `topology`, `--out` |
 | `showcase` | guided tour on a generated web shop with a real agent | `--no-ask`, `--auto` |
 | `calibrate` | build registry v1 from historical logs, with a holdout-coverage report | `--logs`, `--registry`, `--llm`, `--sample`, `--depth`, `--similarity`, `--dataset` (GA/PA), `--tune` |
 | `train` | train LogBERT on per-device windows | `--logs`, `--out`, `--window`, `--stride`, `--hidden`, `--layers`, `--heads`, `--epochs` |

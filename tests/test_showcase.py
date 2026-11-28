@@ -94,8 +94,8 @@ def test_showcase_saves_its_answers_as_the_next_defaults(tmp_path, monkeypatch):
         raise SystemExit("stop")  # everything after the questions is out of scope here
 
     monkeypatch.setattr(start, "plan", stop)
-    # queue, store (Enter = saved clickhouse), llm, port (Enter = saved 9191), data dir
-    it = iter(["kafka", "", "offline", "", ""])
+    # data here, queue, store (Enter = saved clickhouse), llm, port (Enter = saved 9191), data dir
+    it = iter(["here", "kafka", "", "offline", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(it))
     with pytest.raises(SystemExit):
         showcase.run()

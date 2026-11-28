@@ -34,7 +34,7 @@ class AppSettings(BaseSettings):
     logs_path: Path = Path("logs")
     registry_path: Path = Path("artifacts/registry.json")
     model_path: Path = Path("artifacts/logbert")
-    store: Literal["memory", "clickhouse", "mongodb"] = "memory"
+    store: Literal["memory", "clickhouse", "mongodb", "remote"] = "memory"
     queue: Literal["memory", "kafka"] = "memory"
 
 
@@ -110,6 +110,10 @@ class ServerSettings(BaseSettings):
     drift_keep: int = 2000  # live windows kept per stream
     drift_min_live: int = 200  # fewer live windows than this: no PSI yet
     metrics_latency_cap: int = 20_000  # latencies kept per sample (a uniform reservoir beyond that)
+    # `--store remote`: the client's dataplane connects to this port with this key
+    dataplane_key: str | None = None
+    dataplane_port: int = 8090
+    dataplane_timeout: float = 60  # seconds one call may take on the client side
 
     @property
     def session_seconds(self) -> int:

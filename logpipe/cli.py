@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 from collections import Counter, defaultdict
@@ -288,6 +289,27 @@ def _server(args: argparse.Namespace) -> None:
     )
 
 
+def _dataplane(args: argparse.Namespace) -> None:
+    from .server.dataplane import serve
+    from .storage import open_store
+
+    key = get_settings().server.dataplane_key
+    if not args.server or not key:
+        raise SystemExit("set --server (or LOGPIPE_DATAPLANE_URL) and LOGPIPE_DATAPLANE_KEY")
+    serve(args.server, key, open_store(args.store))
+
+
+def _deploy_render(args: argparse.Namespace) -> None:
+    from .deploy import load, render
+
+    try:
+        topo = load(args.topology)
+    except ValueError as error:
+        raise SystemExit(f"{args.topology}: {error}") from error
+    for path in render(topo, args.out):
+        print(path)
+
+
 def _start(args: argparse.Namespace) -> None:
     from .start import start
 
@@ -477,7 +499,10 @@ def main(argv: list[str] | None = None) -> None:
         help="ingest your Datadog logs matching this Logs query, e.g. 'service:shop*' (DD_API_KEY + DD_APP_KEY)",
     )
     sv.add_argument(
-        "--store", choices=["memory", "clickhouse", "mongodb"], default=settings.app.store
+        "--store",
+        choices=["memory", "clickhouse", "mongodb", "remote"],
+        default=settings.app.store,
+        help="remote: the rows live on the client's `logpipe dataplane`, which connects in",
     )
     sv.add_argument("--queue", choices=["memory", "kafka"], default=settings.app.queue)
     sv.add_argument(
@@ -491,6 +516,30 @@ def main(argv: list[str] | None = None) -> None:
     )
     sv.add_argument("--epochs", type=int, default=8, help="LogBERT epochs per stream")
     sv.set_defaults(func=_server)
+
+    dp = sub.add_parser(
+        "dataplane",
+        help="client side of `server --store remote`: keep the rows here, dial out to the server",
+    )
+    dp.add_argument(
+        "--server",
+        default=os.environ.get("LOGPIPE_DATAPLANE_URL", ""),
+        help="the hosted server's dataplane address, e.g. wss://acme.logpipe.example/dataplane "
+        "(LOGPIPE_DATAPLANE_URL); the key is read from LOGPIPE_DATAPLANE_KEY",
+    )
+    dp.add_argument(
+        "--store",
+        choices=["memory", "clickhouse", "mongodb"],
+        default=settings.app.store if settings.app.store != "remote" else "clickhouse",
+    )
+    dp.set_defaults(func=_dataplane)
+
+    dep = sub.add_parser("deploy", help="render each host's compose files from a topology")
+    deps = dep.add_subparsers(dest="deploy_cmd", required=True)
+    rnd = deps.add_parser("render", help="topology.yaml -> hosted/ and client-<tenant>/ dirs")
+    rnd.add_argument("topology", type=Path)
+    rnd.add_argument("--out", type=Path, default=Path("deploy/out"))
+    rnd.set_defaults(func=_deploy_render)
 
     sc = sub.add_parser(
         "showcase", help="guided tour: server, a web shop's logs, an agent, every feature"

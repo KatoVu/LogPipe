@@ -326,7 +326,18 @@ def run(
     datadog: bool = False,
     fresh_templates: bool = False,
 ) -> None:
-    from ..start import SAVED, _save, ask_setup, confirm, docker_up, load_env, plan
+    from ..start import (
+        SAVED,
+        _save,
+        ask_setup,
+        confirm,
+        dataplane,
+        dataplane_key,
+        docker_up,
+        load_env,
+        plan,
+        spawn,
+    )
 
     load_env()
     # `kill` (SIGTERM) stops the server and agent too, like Ctrl+C.
@@ -341,7 +352,9 @@ def run(
         a = ask_setup(saved | ({"server_port": port} if port else {}), "server")
         _save(saved, a, saved.get("signed_in", []))
         dd_keys = get_settings().datadog
-        if not datadog and dd_keys.api_key and dd_keys.app_key:
+        if a.get("residency") == "client":
+            datadog = False  # Datadog would copy the client's lines off it
+        elif not datadog and dd_keys.api_key and dd_keys.app_key:
             datadog = confirm("Also show the Datadog integration (your DD_API_KEY org)?", False)
     else:
         a = {
@@ -353,6 +366,7 @@ def run(
         }
     a |= {"data_dir": str(ROOT / "server")}
     services, [cmd] = plan(a)
+    client = dataplane(a)
     port = int(a["server_port"])
     dd = ShowcaseDatadog(HOST) if datadog else None
     if dd:
@@ -360,6 +374,8 @@ def run(
     if services:
         fresh_volumes(services)
         docker_up(services)
+    if client:
+        dataplane_key()
     settings = get_settings()
     password = settings.server.admin_password or secrets.token_urlsafe(9)
     # The server runs as a child process: its settings travel as environment variables.
@@ -373,7 +389,8 @@ def run(
     cache = ROOT.parent / f"showcase-drafts-{a.get('llm_kind', 'offline')}.json"
     if fresh_templates:
         cache.unlink(missing_ok=True)
-    env["LOGPIPE_DRAFT_CACHE"] = str(cache.resolve())
+    if not client:  # the cache keeps sample lines on the server side
+        env["LOGPIPE_DRAFT_CACHE"] = str(cache.resolve())
     env["LOGPIPE_UI_GOTO"] = "1"  # the tour moves your one UI tab; off on any other server
     shutil.rmtree(ROOT, ignore_errors=True)
     (ROOT / "logs").mkdir(parents=True)
@@ -387,13 +404,17 @@ def run(
             dd.start()
         print(f"{D}$ logpipe {' '.join(cmd)}   (output in {ROOT / 'server.out'}){R}")
         procs.append(
-            subprocess.Popen(
-                [sys.executable, "-c", "from logpipe.cli import main; main()", *cmd],
-                stdout=(ROOT / "server.out").open("w"),
-                stderr=subprocess.STDOUT,
-                env=env,
-            )
+            spawn(cmd, env, stdout=(ROOT / "server.out").open("w"), stderr=subprocess.STDOUT)
         )
+        if client:
+            print(
+                f"{D}$ logpipe {' '.join(client)}   (the client's side; {ROOT / 'dataplane.out'}){R}"
+            )
+            procs.append(
+                spawn(
+                    client, env, stdout=(ROOT / "dataplane.out").open("w"), stderr=subprocess.STDOUT
+                )
+            )
         for _ in range(120):
             try:
                 api("/api/auth/status")
