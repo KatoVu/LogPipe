@@ -129,6 +129,7 @@ class Candidate(_Model):
     anomaly: float
     rarity: float
     proximity: float
+    dependency: float = 1.0  # > 1: the anchor's service depends on this one (component graph)
     score: float
     why: str
     earliest_in_chain: bool = False
@@ -210,6 +211,30 @@ class Answer(_Model):
     llm_error: str = ""  # the LLM failed or timed out: the answer is the rules' ranking instead
 
 
+class GraphLink(_Model):
+    """One edge of the component graph in a report, cited as ``ref`` (G1, ...): ``src`` talks to
+    ``dst`` (``src`` depends on ``dst`` when ``relation`` is depends_on), shown by ``templates``,
+    with their lines and error/warn lines in the window read."""
+
+    ref: str
+    src: str
+    dst: str
+    relation: str = "depends_on"
+    status: list[str] = Field(default_factory=list)
+    templates: list[int] = Field(default_factory=list)
+    lines: int = 0
+    errors: int = 0
+    by: str = "llm"
+    # traced links (by traces): calls and failed calls in the window, mean ms, and the window
+    # before; ``broken`` says how they changed, if they did
+    calls: int | None = None
+    call_errors: int = 0
+    ms: float = 0.0
+    base_calls: int = 0
+    base_ms: float = 0.0
+    broken: str | None = None
+
+
 class Report(_Model):
     kind: Literal["report"] = "report"
     intent: str
@@ -221,6 +246,7 @@ class Report(_Model):
     groups: dict[str, list[str]] = Field(default_factory=dict)
     hints: list[Hint] = Field(default_factory=list)
     series: list[Series] = Field(default_factory=list)
+    graph: list[GraphLink] = Field(default_factory=list)
     answer: Answer | None = None
 
     def refs(self) -> set[str]:
@@ -229,6 +255,7 @@ class Report(_Model):
             {e.ref for e in self.evidence}
             | {h.ref for h in self.hints}
             | {s.ref for s in self.series}
+            | {g.ref for g in self.graph}
         )
         out |= {template_ref(e.template_id) for e in self.evidence}
         return (out | {template_ref(c.template_id) for c in self.candidates}) - {None}  # type: ignore[operator]

@@ -55,6 +55,10 @@ class AskService:
         from ..server.core import _template_text
 
         services = {src["service"] for src in s.sources.values() if src["service"]}
+        if (
+            s.config.graph.enabled
+        ):  # a component only traces show (no logs of its own) can be asked about
+            services |= {n for e in s.graph.store.edges() for n in (e.src, e.dst)}
 
         host_ids = {src["host"] for src in s.sources.values()}
         host_names = {a["hostname"] for a in s.control.all("agent")}
@@ -105,6 +109,8 @@ class AskService:
             question=question,
             now=now or _now(),
             window=s.window,
+            graph=s.graph.store if s.config.graph.enabled else None,
+            calls=s.graph.calls if s.config.graph.enabled else None,
             **flags,
         )
 

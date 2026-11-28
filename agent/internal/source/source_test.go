@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -382,5 +384,65 @@ func TestPruneKeepsCursors(t *testing.T) {
 	}
 	if _, ok := pos.Get("gone.log"); ok {
 		t.Fatal("deleted file kept")
+	}
+}
+
+func TestTailReportsScansAndUnterminatedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	appendFile(t, path, "")
+	src := config.Source{Type: "file", Path: path}
+	tr := &Tracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "positions.json")), tr, out)
+	waitStats := func(what string, ok func(Stats) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if ok(tr.Snapshot(src)) {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %s: %+v", what, tr.Snapshot(src))
+	}
+	waitStats("a scan", func(s Stats) bool { return s.ScannedAt != "" && s.PartialSince == "" })
+	appendFile(t, path, "a\npart")
+	collect(t, out, 1)
+	waitStats("the partial line", func(s Stats) bool { return s.PartialSince != "" })
+	appendFile(t, path, "ial\n")
+	collect(t, out, 1)
+	waitStats("the partial to clear", func(s Stats) bool { return s.PartialSince == "" })
+}
+
+func TestTailStartReadsLastLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	var b strings.Builder
+	for i := range 5 {
+		fmt.Fprintf(&b, "old %d\n", i)
+	}
+	appendFile(t, path, b.String()+"half")
+	src := config.Source{Type: "file", Path: path, StartAt: "tail", TailLines: 2}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Line, 10)
+	go TailFiles(ctx, src, LoadPositions(filepath.Join(dir, "positions.json")), &Tracker{}, out)
+	time.Sleep(50 * time.Millisecond) // the first scan sees "half" unfinished
+	appendFile(t, path, " done\n")
+	if got := collect(t, out, 3); !reflect.DeepEqual(got, []string{"old 3", "old 4", "half done"}) {
+		t.Fatalf("tail: %q", got)
+	}
+}
+
+func TestTailOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f")
+	appendFile(t, path, "a\nbb\nccc\n")
+	f, _ := os.Open(path)
+	defer f.Close()
+	for n, want := range map[int]int64{1: 5, 2: 2, 3: 0, 9: 0} {
+		if got := tailOffset(f, 9, n); got != want {
+			t.Fatalf("tailOffset(%d) = %d, want %d", n, got, want)
+		}
 	}
 }

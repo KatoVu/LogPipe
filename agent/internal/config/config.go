@@ -50,8 +50,10 @@ type Source struct {
 	Service string   `yaml:"service,omitempty" json:"service,omitempty"`
 	Src     string   `yaml:"source,omitempty" json:"source,omitempty"`
 	Tags    []string `yaml:"tags,omitempty" json:"tags,omitempty"`
-	// StartAt is "end" (default, like tail -f) or "beginning" for files seen for the first time.
-	StartAt string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
+	// StartAt is "end" (default, like tail -f), "beginning", or "tail" (the last TailLines lines,
+	// so a new source has history to learn templates from at once) for files seen for the first time.
+	StartAt   string `yaml:"start_position,omitempty" json:"start_position,omitempty"`
+	TailLines int    `yaml:"tail_lines,omitempty" json:"tail_lines,omitempty"`
 	// Latest is "highest" (default) or "lowest": which end of a placeholder path's order is the
 	// file to tail (see Format).
 	Latest        string `yaml:"latest,omitempty" json:"latest,omitempty"`
@@ -216,8 +218,11 @@ func (s Source) Validate() error {
 			return fmt.Errorf("%s source needs a port", s.Type)
 		}
 	}
-	if s.StartAt != "" && s.StartAt != "end" && s.StartAt != "beginning" {
-		return fmt.Errorf("start_position must be end or beginning")
+	if s.StartAt != "" && s.StartAt != "end" && s.StartAt != "beginning" && s.StartAt != "tail" {
+		return fmt.Errorf("start_position must be end, beginning or tail")
+	}
+	if s.TailLines < 0 {
+		return fmt.Errorf("tail_lines must not be negative")
 	}
 	if _, err := s.Format(); err != nil {
 		return err

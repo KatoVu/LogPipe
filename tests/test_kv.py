@@ -1,3 +1,5 @@
+import time
+
 from logpipe.parsing.kv import compile_extractor, default_keys, extract, slot_labels
 
 TEMPLATE = [
@@ -37,3 +39,16 @@ def test_literals_are_escaped():
     pattern = compile_extractor(["a.b", "(x)", "<*>"])
     assert extract(pattern, ["v"], "a.b (x) 1") == {"v": "1"}
     assert extract(pattern, ["v"], "aXb (x) 1") is None
+
+
+def test_a_line_that_backtracks_gives_up_instead_of_hanging():
+    # Train Ticket's ticket lists: fails only at the last <*>, after trying every split of the rest
+    ticket = "Ticket(seatNo=<VAR:MEASURE>, startStation=shanghai, destStation=nanjing),"
+    tokens = ["<VAR:TIMESTAMP>", "Left", "ticket", "info"] + ticket.split() * 30
+    tokens[-1] = "destStation=nanjing)]}<*>"
+    line = "2024-12-07 20:09:02 Left ticket info " + " ".join(
+        f"Ticket(seatNo={i}, startStation=shanghai, destStation=nanjing)," for i in range(30)
+    )
+    start = time.monotonic()
+    assert extract(compile_extractor(tokens), default_keys(tokens), line[:-1] + ")]}") is None
+    assert time.monotonic() - start < 2

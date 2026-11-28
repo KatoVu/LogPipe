@@ -154,7 +154,8 @@ func cmdTrack(dir string, args []string, out io.Writer) error {
 	file := fs.String("name", "", "conf.d file name (default: the service, else \"custom\")")
 	multiline := fs.String("multiline", "", "regex every new event starts with (e.g. '^\\d{4}-\\d{2}-\\d{2}')")
 	auto := fs.Bool("auto-multiline", false, "detect the event start automatically")
-	start := fs.String("start", "", "end (default) or beginning: where to start a file seen for the first time")
+	start := fs.String("start", "tail", "tail (default: its last lines), end or beginning: where to start a file seen for the first time")
+	tailLines := fs.Int("tail-lines", 0, fmt.Sprintf("lines --start tail reads (default %d)", source.DefaultTailLines))
 	var tags, exclude, include, mask, labels multiFlag
 	fs.Var(&tags, "tag", "tag key:value (repeatable)")
 	fs.Var(&exclude, "exclude", "drop events matching regex (repeatable)")
@@ -176,7 +177,7 @@ func cmdTrack(dir string, args []string, out io.Writer) error {
 	if s.Type == "file" && strings.ContainsAny(s.Path, "*?[") {
 		s.Path, detected = detectedPath(s.Path)
 	}
-	s.Service, s.Src, s.Tags, s.Labels, s.StartAt = *service, *src, tags, labels, *start
+	s.Service, s.Src, s.Tags, s.Labels, s.StartAt, s.TailLines = *service, *src, tags, labels, *start, *tailLines
 	if *multiline != "" {
 		s.Rules = append(s.Rules, config.Rule{Type: "multi_line", Name: "new_event", Pattern: *multiline})
 	}

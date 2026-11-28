@@ -3,7 +3,8 @@
 [RCAEval](https://github.com/phamquiluan/RCAEval) (MIT) publishes 735 labelled failure cases
 from real microservice testbeds (Online Boutique, Sock Shop, Train Ticket) and a scorer that
 works with any method. It's the held-out test for logpipe's root-cause analysis: none of its
-heuristics were tuned on these cases.
+heuristics were tuned on these cases, except RE3-OB's, which the graph's call factor was set
+against.
 
 ## What can be scored
 
@@ -12,7 +13,7 @@ logpipe reads **logs only**, so:
 | Suite | Logs? | Usable |
 |---|---|---|
 | RE1 (375 cases) | no, metrics only | ✗ |
-| RE2 (270): cpu, mem, disk, delay, loss, socket faults | yes | ✓ but resource faults leave few log traces |
+| RE2 (270): cpu, mem, disk, delay, loss, socket faults | yes, but the faults show in metrics | ✗ not reported |
 | RE3 (90): code-level faults F1–F5 | OB and TT; not SS | ✓ the fair test |
 
 Only the **service level** is scored. The indicator level (`checkoutservice_cpu`) needs metrics.
@@ -59,6 +60,10 @@ cause services: `emailservice` 15, `adservice` 9, `cartservice` 3, `currencyserv
 | **Claude Code + MCP, with `ask`** | **0.87** | 0.87 | 0.90 | **0.88** | 0.64 | 122 s | $0.23 (235k in / 1.4k out tokens, 9 tool calls) |
 | **Claude Code + MCP, raw tools** | **0.90** | 0.90 | 0.90 | **0.90** | 0.66 | 118 s | $0.22 (221k in / 1.4k out, 8.7 tool calls) |
 
+Rerun on 26 Nov with the current code and the [graph from traces](results.md#component-graph):
+rules only 0.77 AC@1 (0.40 without the graph), rules + Gemini 0.93 (0.90 without). The table
+above is from before `settle()` and those changes, so its rows don't compare with these.
+
 Chance@5 is 0.24 for every setup. The Claude Code cost is the API-price figure Claude Code
 reports. The runs used a Claude Code login, not an API key.
 
@@ -70,6 +75,18 @@ reports. The runs used a Claude Code login, not an API key.
 | rules + Gemini | 0.78 | 0.93 | 0.73 | 0.73 | 0.97 |
 | Claude Code + `ask` | 0.60 | 1.00 | 1.00 | 1.00 | 1.00 |
 | Claude Code, raw | 0.67 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+## Results: RE3-TT
+
+30 code faults (F1–F4) on Train Ticket, run 27 Nov on the current code; no setting was tuned
+on them. Rules + graph from traces (`--traces`) + Gemini (web chat,
+`--label-with-rules --llm llm:web:gemini`):
+
+| AC@1 | AC@3 | AC@5 | Avg@5 | time / case | tokens in / out |
+|---|---|---|---|---|---|
+| **1.00** | 1.00 | 1.00 | **1.00** | 275 s | ~18k / 5.9k |
+
+Every case is right first, with or without the graph.
 
 ## Findings
 
@@ -90,6 +107,18 @@ reports. The runs used a Claude Code login, not an API key.
    normal logs to train LogBERT on, and the question names a time but no service, so the
    LogBERT surprise and neighbour factors rarely apply.
 5. **F1 is the hard type for everyone**, the only one where Claude Code stays below 0.7.
+6. **The component graph doesn't help here** (run 2026-11-25, rules only). No link is learnable:
+   the logs never name a callee. Even with the 11 true links entered by hand (`--true-links`)
+   AC@1 stays 0.40, factor on or off: the lift applies to errors, warnings and new templates on a
+   dependency, and the faulty `emailservice` logs none of those.
+7. **A graph from traces does help** (`--traces`): rules only, AC@1 0.40 → 0.77 and Avg@5
+   0.56 → 0.85. The lift comes from the calls on each link, not the links themselves: with the
+   call factor off the score is unchanged. It fixes the 9 `emailservice` faults that stop its
+   calls (F1, F2, F5) and 2 of 3 `currencyservice` faults; F3/F4 leave calls looking normal.
+   With Gemini, AC@1 0.90 → 0.93 (within noise) at the same token count, because the graph
+   reorders the evidence but isn't put in the prompt: in the prompt it cost ~2.2k tokens a case
+   and scored 0.80.
+   [Component graph results](results.md#component-graph).
 
 !!! warning "Caveats"
     - Every run above predates `settle()` (`c615e33`): cases were enriched with a fixed 3 learner

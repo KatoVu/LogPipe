@@ -39,7 +39,9 @@ from .rca_eval import (
     World,
     _calibrate,
     investigate,
+    learn_graph,
     make_server,
+    release,
     settle,
     utc_clock,
 )
@@ -70,7 +72,14 @@ def read_logs(path: Path) -> list[tuple[datetime, str, str, str]]:
     return rows
 
 
-def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4):
+def load_case(
+    case_dir: Path,
+    adapter_factory=None,
+    epochs: int = 4,
+    graph_adapter=None,
+    true_links=False,
+    traces=False,
+):
     """The case's task and a server that has read its logs: calibrated on the lines before the
     fault, then given the rest."""
     from ..sources.file_replay import LogEvent
@@ -102,6 +111,21 @@ def load_case(case_dir: Path, adapter_factory=None, epochs: int = 4):
     _calibrate(server, client)
     send(rows[split:])
     settle(server)
+    learn_graph(server, graph_adapter, end=rows[-1][0] + timedelta(minutes=1))
+    if traces and (path := case_dir / task["files"].get("traces", "traces.csv")).exists():
+        from ..graph.traces import read_csv  # what an OTLP exporter would have sent /v1/traces
+
+        read_csv(server.graph.calls, path)
+        server.graph.save_calls()
+        server.graph.rebuild(server)
+    if true_links:  # as if someone entered Online Boutique's architecture on the Topology page
+        from .graph_eval import OB_TRUTH
+
+        known = server.graph.known(server)
+        for a, b in OB_TRUTH:
+            if a in known and b in known:
+                server.graph.edit(a, b, "depends_on", removed=False)
+        server.graph.rebuild(server)
     return task, World(server, client)
 
 
@@ -363,6 +387,19 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--variants", nargs="*", help="default: full, no_logbert, no_semantic (direct)")
     ap.add_argument("--no-anchor", action="store_true", help="don't tell the RCA when it broke")
     ap.add_argument("--epochs", type=int, default=4)
+    ap.add_argument(
+        "--traces", action="store_true", help="also learn links from each case's traces.csv"
+    )
+    ap.add_argument(
+        "--label-with-rules",
+        action="store_true",
+        help="with --llm: label templates with the rule baseline, the LLM only answers",
+    )
+    ap.add_argument(
+        "--true-links",
+        action="store_true",
+        help="add Online Boutique's real links by hand on top of the learned ones",
+    )
     ap.add_argument("--llm", help="direct: llm:<provider>[:<model>] for the router and synthesizer")
     ap.add_argument(
         "--record",
@@ -405,6 +442,12 @@ def main(argv: list[str] | None = None) -> None:
             }
     if not variants:
         ap.error("no variant left to run")
+    # the graph is labelled by the LLM when there is one, else by the rule baseline
+    graph_llm = (
+        Transcript(llm, logs / f"{args.tasks.name}.graph.llm.jsonl")
+        if args.via == "direct" and (args.llm or args.replay) and not args.label_with_rules
+        else None
+    )
     suffix = "" if not args.no_anchor else ".no_anchor"
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {k: out_dir / f"preds.{args.tasks.name}.{k}{suffix}.jsonl" for k in variants}
@@ -431,7 +474,24 @@ def main(argv: list[str] | None = None) -> None:
             started = time.perf_counter()
             task = json.loads((case / "task.json").read_text("utf-8"))
             try:
-                _, world = load_case(case, epochs=args.epochs)
+                if graph_llm is not None:
+                    graph_llm.case = case.name
+                _, world = load_case(
+                    case,
+                    epochs=args.epochs,
+                    graph_adapter=graph_llm,
+                    true_links=args.true_links,
+                    traces=args.traces,
+                )
+                append(
+                    out_dir / f"graphs.{args.tasks.name}.{'llm' if graph_llm else 'rules'}.jsonl",
+                    {
+                        "case_id": case.name,
+                        "services": sorted(world.server.graph.known(world.server)),
+                        "edges": [e.to_dict() for e in world.server.graph.store.edges()],
+                        "stats": world.server.graph.stats,
+                    },
+                )
                 error = None
             # one broken case must not end a long run: it's scored as a miss, retried next run
             except Exception as e:  # noqa: BLE001
@@ -464,6 +524,9 @@ def main(argv: list[str] | None = None) -> None:
                     f"{bar(done, runs, began)}  {case.name} {name}: {shown} ({wall:.0f} s)",
                     flush=True,
                 )
+            if world is not None:
+                release(world.server)
+                world = None
     for name, p in paths.items():
         bad = sum(failed(v) for v in preds[name].values())
         print(f"{p}" + (f"  ({bad} failed: rerun to retry them)" if bad else ""))

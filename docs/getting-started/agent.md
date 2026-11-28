@@ -144,7 +144,13 @@ docker rm -f logpipe-agent
 `journald:UNIT`, `docker`, `tcp:PORT` or `udp:PORT`.
 Useful `track` flags: `--service`, `--source`, `--tag k:v`, `--auto-multiline`,
 `--multiline REGEX`, `--exclude REGEX`, `--include REGEX`, `--mask 'REGEX=>REPLACEMENT'`,
-`--label key=value` (docker), `--start beginning|end`.
+`--label key=value` (docker), `--start tail|end|beginning`, `--tail-lines N`.
+
+`track` starts a source with **`--start tail`**: the last 1000 lines (`--tail-lines`) of a file,
+container or journald unit already there are shipped once, then it's followed live. A new source
+then has enough history for the server to draft its templates right away, instead of waiting for
+fresh traffic. In `conf.d` this is `start_position: tail` (with `tail_lines`); without the key a
+source starts at the end, like `tail -f`.
 
 The container takes the same commands through `docker exec` ([see above](#use-the-container)).
 

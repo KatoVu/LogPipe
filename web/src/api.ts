@@ -113,6 +113,8 @@ export interface Draft {
   keys: string[];
   count: number;
   samples: string[];
+  services?: string[];
+  edges?: { target: string; relation: string; status: string }[];
   status: "pending" | "approved" | "rejected" | "merged";
   edited?: boolean;
   merged_into?: string;
@@ -327,7 +329,7 @@ export interface Group {
 
 export interface Warning {
   id: string;
-  kind: "new_source" | "novel_template";
+  kind: "new_source" | "novel_template" | "volume" | "ingestion";
   subject: string;
   title: string;
   detail: string;

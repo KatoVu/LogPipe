@@ -109,6 +109,8 @@ def check_moves(requests: list[MoveRequest], report: Report, ctx: Ctx) -> list[M
     cfg, out, seen = ctx.rca, [], set()
     longest = cfg.move_max_hours * 60
     for r in requests:
+        if ctx.moves is not None and r.kind not in ctx.moves:
+            continue
         services = [s for s in r.services if s in known][:5]
         keywords = [k.strip()[:100] for k in r.keywords if k.strip()][:3]
         value = r.value.strip()

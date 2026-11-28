@@ -305,6 +305,8 @@ def _fetch_data(args: argparse.Namespace) -> None:
 def _eval_module(name: str, argv: list[str]) -> None:
     if name == "rca":
         from .eval.rca_eval import main as run
+    elif name == "graph":
+        from .eval.graph_eval import main as run
     else:
         from .eval.rcaeval_bench import main as run
     run(argv)
@@ -553,6 +555,7 @@ def main(argv: list[str] | None = None) -> None:
     for name, help in (
         ("rca", "root cause on 15 faults injected into a generated web shop"),
         ("rcaeval", "root cause on RCAEval cases (TASKS_DIR from rcaeval-agent export)"),
+        ("graph", "the component graph: links learned, dependency questions, cost"),
     ):
         evs.add_parser(name, help=help, add_help=False).set_defaults(func=_eval_module)
 

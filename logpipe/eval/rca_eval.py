@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..settings import RcaSettings
 from ..showcase.generator import FAULTS, FILES, ShopGenerator
 
 if TYPE_CHECKING:
@@ -142,6 +144,22 @@ def make_server(data_dir: Path, adapter_factory=None, epochs: int = 4):
     return server, TestClient(create_app(server))
 
 
+def release(server) -> None:
+    """Free a server made by ``make_server`` before the next. FastAPI's callable caches (4096
+    entries, module-wide) keep every app's endpoints, and through their closures the server with
+    all its lines: about 25 cases' worth, 13 GB on RE2-TT."""
+    from fastapi.dependencies import models
+
+    for name in (
+        "_is_gen_callable_cached",
+        "_is_async_gen_callable_cached",
+        "_is_coroutine_callable_cached",
+    ):
+        if cached := getattr(models, name, None):
+            cached.cache_clear()
+    shutil.rmtree(server.data_dir, ignore_errors=True)
+
+
 def settle(server, max_cycles: int = 10) -> None:
     """Run the online learner (what the server does every 30 s) until a cycle creates no new
     template: each cycle creates at most ``max_new_per_cycle`` and re-queues the rest. Clusters
@@ -159,6 +177,8 @@ def build_world(
     adapter_factory=None,
     epochs: int = 4,
     log=print,
+    topology: bool = False,
+    graph_adapter=None,
 ) -> World:
     """Train on normal traffic, then inject each fault in its own slot ending just before now."""
     import tempfile
@@ -167,7 +187,7 @@ def build_world(
     modes = modes or list(FAULTS)
     data_dir = data_dir or Path(tempfile.mkdtemp(prefix="rca-eval-"))
     server, client = make_server(data_dir, adapter_factory, epochs)
-    gen = ShopGenerator(data_dir / "unused", seed=seed)
+    gen = ShopGenerator(data_dir / "unused", seed=seed, topology=topology)
     slot_len = NORMAL_BEFORE + ASK_AFTER
     end = (datetime.now(UTC) - timedelta(minutes=1)).replace(microsecond=0)
     t0 = end - slot_len * len(modes) - TRAIN_FOR
@@ -196,8 +216,16 @@ def build_world(
             )
         )
         log(f"  injected {mode} at {fault:%H:%M}")
+    learn_graph(server, graph_adapter)
     world.seconds = time.perf_counter() - started
     return world
+
+
+def learn_graph(server, adapter=None, end: datetime | None = None) -> None:
+    """Label every template not labelled yet (what the server's housekeeping does as they're
+    learned), with ``adapter`` (default: the server's), and derive the graph."""
+    server.graph.label_new(server, adapter or server.adapter, end=end)
+    server.graph.rebuild(server)
 
 
 def _calibrate(server, client) -> None:
@@ -334,6 +362,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out", type=Path, default=Path("artifacts/eval/rca.json"))
     ap.add_argument("--epochs", type=int, default=4)
     ap.add_argument(
+        "--topology",
+        action="store_true",
+        help="services name what they talk to (the shop's showcase traffic): the component graph has something to learn",
+    )
+    ap.add_argument(
         "--llm",
         help="llm:<provider>[:<model>] for the router and the synthesizer (default: none, rules only)",
     )
@@ -357,7 +390,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         variants = {f"{k}+llm": v | {"adapter": llm} for k, v in variants.items()} | variants
     with utc_clock():
-        world = build_world(args.modes, epochs=args.epochs)
+        world = build_world(args.modes, epochs=args.epochs, topology=args.topology)
         print(f"world built in {world.seconds:.0f} s")
         result = evaluate(world, _investigate_or_none(), variants)
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -369,6 +402,12 @@ VARIANTS: dict[str, dict] = {
     "full": {},
     "no_logbert": {"use_logbert": False},
     "no_semantic": {"use_semantic": False},
+    "no_hints": {"use_hints": False},
+    "no_moves": {"moves": frozenset()},
+    "no_graph": {"use_graph": False},
+    # the graph slice in the bundle, but no dependency factor in the ranking
+    "graph_no_factor": {"rca": RcaSettings(graph_weight=0)},
+    "no_call_factor": {"rca": RcaSettings(call_weight=0)},
 }
 
 

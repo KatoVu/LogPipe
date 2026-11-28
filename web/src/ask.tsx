@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { api, useAction, usePoll } from "./api";
 import { AutoChart, LEVELS, Timeline } from "./charts";
 import { Card, CopyBlock, Empty, Switch, TimeAgo, time, useFollow } from "./ui";
+import { GraphView, type GraphEdge, type Health } from "./graph";
 
 export interface AskQuery {
   id: string; tool: string; title: string; why: string; compiled: string; engine: string;
@@ -18,6 +19,7 @@ interface Cause { cause: string; confidence: string; reasoning: string; cites: s
 interface Moment { at: string; what: string; cites: string[] }
 interface Answer { summary: string; timeline: Moment[]; hypotheses: Cause[]; leads: Cause[]; insufficient_evidence: boolean; missing: string; next_steps: string[]; dropped: { section: string; text?: string | null }[]; by: "llm" | "rules"; note: string; llm_error?: string }
 interface Anchor { kind: string; at: string; service?: string | null; host?: string | null; why: string }
+interface GraphLink { ref: string; src: string; dst: string; relation: string; status: string[]; templates: number[]; lines: number; errors: number; by: string; calls?: number | null; call_errors?: number; broken?: string | null }
 interface Hint { ref: string; field: string; value: string; errors: number; error_share: number; other_share: number; ratio: number }
 interface Series { ref: string; service: string | null; what: string; start: string; step_seconds: number; counts: number[] }
 interface AiStep {
@@ -31,7 +33,7 @@ export interface AskResult {
   templates?: { template_id: number; service: string | null; count: number; first: string; last: string; text: string }[];
   columns?: string[]; rows?: unknown[][]; compiled?: string;
   anchor?: Anchor; evidence?: Evidence[]; candidates?: Candidate[]; notes?: string[]; groups?: Record<string, string[]>; at?: string;
-  hints?: Hint[]; series?: Series[];
+  hints?: Hint[]; series?: Series[]; graph?: GraphLink[];
 }
 export interface AskPlan {
   id: string; question: string; via: string; notes: string[]; spec: Record<string, unknown>; require_approval: boolean;
@@ -377,6 +379,7 @@ export function ReportView({ r }: { r: AskResult }) {
   const evidence = r.evidence ?? [];
   const hints = r.hints ?? [];
   const series = r.series ?? [];
+  const graph = r.graph ?? [];
   const goTo = (ref: string) => {
     const line = ref.startsWith("T") ? evidence.find((e) => `T${e.template_id}` === ref)?.ref : ref;
     setTab("evidence");
@@ -407,7 +410,7 @@ export function ReportView({ r }: { r: AskResult }) {
         <div className="tabs" role="tablist">
           {(["answer", "evidence", "ranking"] as const).map((t) => (
             <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t === "answer" ? "Answer" : t === "evidence" ? `Evidence (${evidence.length + hints.length + series.length})` : `Ranking (${r.candidates?.length ?? 0})`}
+              {t === "answer" ? "Answer" : t === "evidence" ? `Evidence (${evidence.length + hints.length + series.length + graph.length})` : `Ranking (${r.candidates?.length ?? 0})`}
             </button>
           ))}
         </div>
@@ -463,8 +466,9 @@ export function ReportView({ r }: { r: AskResult }) {
             </p>
           </div>
         )}
-        {tab === "evidence" && (evidence.length + hints.length + series.length
+        {tab === "evidence" && (evidence.length + hints.length + series.length + graph.length
           ? <>
+            {graph.length > 0 && <Links links={graph} />}
             {hints.length > 0 && <Hints hints={hints} />}
             {series.length > 0 && <Rates series={series} />}
             {evidence.length > 0 && <section className="stack" style={{ gap: 6 }}>
@@ -475,6 +479,33 @@ export function ReportView({ r }: { r: AskResult }) {
         {tab === "ranking" && <Ranking candidates={r.candidates ?? []} />}
       </div>
     </Lit.Provider>
+  );
+}
+
+/** The component graph around the anchor, as the LLM saw it (G refs). */
+function Links({ links }: { links: GraphLink[] }) {
+  const { lit } = useContext(Lit);
+  const names = [...new Set(links.flatMap((l) => [l.src, l.dst]))];
+  const share = (n: number, bad: number): Health => (!n ? "idle" : !bad ? "ok" : bad / n < 0.2 ? "warn" : "error");
+  const health = (l: GraphLink): Health => (l.broken ? "error" : l.calls != null ? share(l.calls, l.call_errors ?? 0) : share(l.lines, l.errors));
+  const data = {
+    nodes: names.map((id) => ({ id })),
+    edges: links.map((l) => ({ id: l.ref, src: l.src, dst: l.dst, relation: l.relation, templates: l.templates, by: l.by as GraphEdge["by"], status: l.status, lines: l.lines, errors: l.errors, health: health(l) })),
+  };
+  return (
+    <section className="stack" style={{ gap: 6 }}>
+      <h3 style={{ margin: 0 }}>Components <span className="muted small">what the anchor's service depends on and what depends on it; colour is each link's calls (traced), else its lines, in the window</span></h3>
+      <div className="graph-wrap"><GraphView data={data} edgeLabel={(e) => e.id} /></div>
+      <ul className="ask-hints">
+        {links.map((l) => (
+          <li key={l.ref} id={`ev-${l.ref}`} className={lit === l.ref ? "lit" : ""}>
+            <span className="ask-ref">{l.ref}</span>
+            <span className="grow"><strong>{l.src}</strong> <span className="muted">{l.relation.replace("_", " ")}</span> <strong>{l.dst}</strong>
+              {l.status.length > 0 && <span className="muted small"> · seen as {l.status.join(", ")}</span>}</span>
+            <span className="num small">{l.calls != null && <>{l.calls} calls, {l.call_errors ?? 0} failed{l.broken && <strong style={{ color: "var(--bad)" }}> · {l.broken}</strong>} · </>}{l.lines} lines, {l.errors} error/warn</span>
+          </li>))}
+      </ul>
+    </section>
   );
 }
 

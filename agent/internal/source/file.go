@@ -30,7 +30,8 @@ type tailed struct {
 	id      fileID
 	offset  int64
 	partial []byte
-	head    uint64 // hash of the first headLen bytes, to tell a reused inode from the same file
+	since   time.Time // when partial started waiting for its newline
+	head    uint64    // hash of the first headLen bytes, to tell a reused inode from the same file
 	headLen int
 }
 
@@ -139,8 +140,9 @@ func resume(pos *Positions, path string, t *tailed, size int64) (int64, bool) {
 
 // TailFiles follows every file matching src.Path, surviving rotation (rename + new file),
 // renames inside the glob (app.log -> app.log.1 is not read twice) and truncation
-// (copytruncate). Files present at the first scan start at their saved offset, or at the end
-// unless start_position is "beginning"; files that appear later are read from the start.
+// (copytruncate). Files present at the first scan start at their saved offset, else at the end,
+// the start ("beginning") or their last lines ("tail"); files that appear later are read from
+// the start.
 //
 // A path with placeholders (config.Format) tails only the latest file of its series. When a later
 // file appears, the previous one stays tailed for SwitchGrace to catch late writes, then is closed.
@@ -251,6 +253,9 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 				// on the first scan after a restart.
 				if !ok && first && src.StartAt != "beginning" && !(f != nil && known(pos, matches)) {
 					off = fi.Size()
+					if src.StartAt == "tail" {
+						off = tailOffset(t.f, off, src.TailLines)
+					}
 				}
 				if err := t.seek(off); err != nil {
 					t.f.Close()
@@ -279,6 +284,13 @@ func TailFiles(ctx context.Context, src config.Source, pos *Positions, tr *Track
 			}
 		}
 		pos.Prune(glob, matches) // after the loop: a renamed file was looked up by its old name
+		var oldest time.Time
+		for _, t := range open {
+			if len(t.partial) > 0 && (oldest.IsZero() || t.since.Before(oldest)) {
+				oldest = t.since
+			}
+		}
+		tr.Scanned(oldest)
 		first = false
 		select {
 		case <-ctx.Done():
@@ -305,12 +317,45 @@ func openFile(path string) (*tailed, os.FileInfo, error) {
 	return t, fi, nil
 }
 
+// DefaultTailLines is how many lines start_position "tail" reads when tail_lines is unset.
+const DefaultTailLines = 1000
+
+// tailOffset is where the last n complete lines of the first size bytes of f begin (n <= 0: the
+// default). Read backwards in blocks, so a large file costs only the bytes of those lines.
+func tailOffset(f *os.File, size int64, n int) int64 {
+	if n <= 0 {
+		n = DefaultTailLines
+	}
+	buf := make([]byte, 64*1024)
+	end := size
+	for end > 0 {
+		start := max(0, end-int64(len(buf)))
+		chunk := buf[:end-start]
+		if _, err := f.ReadAt(chunk, start); err != nil && !errors.Is(err, io.EOF) {
+			return size
+		}
+		if end == size && chunk[len(chunk)-1] != '\n' {
+			n++ // a line still being written isn't one of the n
+		}
+		for i := len(chunk) - 1; i >= 0; i-- {
+			// the newline ending the last line doesn't start a line; the n+1-th one back does
+			if chunk[i] == '\n' && start+int64(i) != size-1 {
+				if n--; n == 0 {
+					return start + int64(i) + 1
+				}
+			}
+		}
+		end = start
+	}
+	return 0
+}
+
 func (t *tailed) seek(off int64) error {
 	if _, err := t.f.Seek(off, io.SeekStart); err != nil {
 		return err
 	}
 	t.r.Reset(t.f)
-	t.offset, t.partial = off, nil
+	t.offset, t.partial, t.since = off, nil, time.Time{}
 	return nil
 }
 
@@ -326,11 +371,14 @@ func drain(ctx context.Context, path string, t *tailed, tr *Tracker, out chan<- 
 			continue
 		}
 		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			if len(t.partial) > 0 && t.since.IsZero() {
+				t.since = time.Now()
+			}
 			return true // EOF: keep partial for the next poll
 		}
 		line := strings.TrimSuffix(string(t.partial), "\n")
 		t.offset += int64(len(t.partial))
-		t.partial = t.partial[:0]
+		t.partial, t.since = t.partial[:0], time.Time{}
 		tr.Count(line)
 		if !send(ctx, out, Line{Key: path, Text: line, Time: time.Now(), Tags: []string{"filename:" + filepath.Base(path)}}) {
 			return false

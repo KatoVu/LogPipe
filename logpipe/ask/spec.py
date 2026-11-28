@@ -22,7 +22,10 @@ AGG_FNS = ("count", "count_distinct", "avg", "min", "max", "sum", "p95")
 GROUP_FIELDS = ("host", "service", "source", "level", "status", "template_id")
 
 
-Intent = Literal["general", "keyword", "event", "semantic", "rca", "summary"]
+Intent = Literal["general", "keyword", "event", "semantic", "rca", "summary", "graph"]
+# graph: impact = what depends on the service (breaks if it fails); depends = what it depends on;
+# path = how two services are linked
+GraphOp = Literal["impact", "depends", "path"]
 Level = Literal["debug", "info", "warn", "error"]
 Measure = Literal["count", "count_distinct", "avg", "min", "max", "sum", "p95"]
 
@@ -77,6 +80,7 @@ class QuerySpec(BaseModel):
     aggregate: Aggregate | None = None
     limit: int = Field(200, ge=1, le=MAX_ROWS)
     answer: str | None = Field(None, max_length=2000)  # general tier only: not from the logs
+    graph_op: GraphOp | None = None
 
     @field_validator("keywords")
     @classmethod
@@ -190,6 +194,14 @@ def validate(raw: dict | QuerySpec, catalog: Catalog, now: datetime | None = Non
 
     if spec.intent != "general":
         spec.answer = None
+
+    if spec.intent == "graph":
+        spec.graph_op = spec.graph_op or "impact"
+        if len(spec.services) < (2 if spec.graph_op == "path" else 1):
+            raise ValueError(
+                "a dependency question needs the service it's about"
+                + (" (two for a path)" if spec.graph_op == "path" else "")
+            )
 
     return spec
 

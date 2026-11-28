@@ -1,11 +1,12 @@
-// Anomaly alerts, grouped into incidents (one service's alerts close together in time). The list
+// Anomaly alerts, grouped into incidents (one service's alerts close together in time), and above
+// them sources logging far less or more than usual and hosts whose logs aren't arriving. The list
 // says what to look at; an incident's page shows the lines the model found unusual and what it
 // expected instead, what else broke at the same time, a root-cause investigation, and an activity timeline of
 // status changes and comments; the header keeps Resolve and the other actions in view.
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { IncidentAsk } from "../ask";
-import { api, useAction, usePoll, type Incident, type IncidentDetail, type IncidentStatus } from "../api";
+import { api, useAction, usePoll, type Incident, type IncidentDetail, type IncidentStatus, type Warning } from "../api";
 import { Card, Empty, Loading, PageHead, Pop, Switch, TimeAgo, time } from "../ui";
 
 export const STATUS: Record<IncidentStatus, { label: string; badge: string }> = {
@@ -23,6 +24,38 @@ function span(start: string, end: string) {
 const FILTERS = { active: (i: Incident) => i.status === "open" || i.status === "acknowledged", all: () => true,
   resolved: (i: Incident) => i.status === "resolved" || i.status === "false_positive" };
 
+function VolumeWarning({ w }: { w: Warning }) {
+  const volume = w.kind === "volume";
+  const resolve = useAction(() => api(`/api/warnings/${encodeURIComponent(w.id)}/resolve`, { method: "POST", json: { note: volume ? "accepted as its usual volume" : "dismissed" } }));
+  return (
+    <li className="todo">
+      <span className={`badge ${volume ? "bad" : "warn"}`}>{volume ? "Volume" : "Ingestion"}</span>
+      <div className="todo-body">
+        <div className="todo-title">{w.title}</div>
+        <div className="todo-detail"><span className="muted small">{w.detail} · since <TimeAgo iso={w.first_seen} /></span></div>
+      </div>
+      <div className="row todo-actions">
+        <button className="btn small" disabled={resolve.isPending} onClick={() => resolve.mutate()}
+          title={volume ? "Its model takes the current volume as normal and learns again" : undefined}>{volume ? "This is normal" : "Dismiss"}</button>
+        {resolve.error && <span className="error-text small">{resolve.error.message}</span>}
+      </div>
+    </li>
+  );
+}
+
+/** Open volume and ingestion warnings; they close by themselves once the volume is back. */
+function VolumeWarnings() {
+  const open = usePoll<{ warnings: Warning[] }>("/api/warnings", 5000).data?.warnings
+    .filter((w) => w.status === "open" && (w.kind === "volume" || w.kind === "ingestion")) ?? [];
+  if (!open.length) return null;
+  return (
+    <Card title={<>Log volume <span className="count-pill">{open.length}</span></>}
+      hint="Sources logging far less or far more than usual for this hour, and hosts whose logs aren't arriving, which hold back their volume alerts.">
+      <ul className="todos">{open.map((w) => <VolumeWarning key={w.id} w={w} />)}</ul>
+    </Card>
+  );
+}
+
 export default function Alerts() {
   const { data, error } = usePoll<{ incidents: Incident[] }>("/api/incidents", 5000);
   const [filter, setFilter] = useState<keyof typeof FILTERS>("active");
@@ -31,7 +64,8 @@ export default function Alerts() {
   return (
     <>
       <PageHead title="Anomaly alerts"
-        sub={<>Stretches of a service's logs its LogBERT model finds unusual, grouped into incidents. Kinds of lines a model has never seen are not alerts: they are listed under <Link to="/maintenance">Maintenance</Link>.</>} />
+        sub={<>Stretches of a service's logs its LogBERT model finds unusual, grouped into incidents. A source that goes quiet or floods is flagged by its log volume. Kinds of lines a model has never seen are not alerts: they are listed under <Link to="/maintenance">Maintenance</Link>.</>} />
+      <VolumeWarnings />
       <Card actions={
         <div className="seg" role="group" aria-label="Show">
           {(Object.keys(FILTERS) as (keyof typeof FILTERS)[]).map((f) => (

@@ -37,6 +37,10 @@ type Stats struct {
 	// Skipped are matched files a name-format source does not tail (not the latest of its series).
 	Skipped []string `json:"skipped_files,omitempty"`
 	Error   string   `json:"error,omitempty"`
+	// ScannedAt is the file reader's last pass: stale while the agent is up means the reader is stuck.
+	ScannedAt string `json:"scanned_at,omitempty"`
+	// PartialSince is when the oldest line still waiting for its newline started.
+	PartialSince string `json:"partial_since,omitempty"`
 }
 
 type Tracker struct {
@@ -44,6 +48,8 @@ type Tracker struct {
 	lines   atomic.Int64
 	bytes   atomic.Int64
 	last    atomic.Int64
+	scanned atomic.Int64
+	partial atomic.Int64
 	files   []string
 	skipped []string
 	err     string
@@ -53,6 +59,16 @@ func (t *Tracker) Count(text string) {
 	t.lines.Add(1)
 	t.bytes.Add(int64(len(text)))
 	t.last.Store(time.Now().UnixMilli())
+}
+
+// Scanned records a finished pass over the files and the oldest unterminated line (zero: none).
+func (t *Tracker) Scanned(partialSince time.Time) {
+	t.scanned.Store(time.Now().UnixMilli())
+	if partialSince.IsZero() {
+		t.partial.Store(0)
+	} else {
+		t.partial.Store(partialSince.UnixMilli())
+	}
 }
 
 func (t *Tracker) SetError(err error) {
@@ -83,6 +99,12 @@ func (t *Tracker) Snapshot(src config.Source) Stats {
 		Lines: t.lines.Load(), Bytes: t.bytes.Load(), Files: t.files, Skipped: t.skipped, Error: t.err}
 	if ms := t.last.Load(); ms > 0 {
 		s.LastLine = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	}
+	if ms := t.scanned.Load(); ms > 0 {
+		s.ScannedAt = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	}
+	if ms := t.partial.Load(); ms > 0 {
+		s.PartialSince = time.UnixMilli(ms).UTC().Format(time.RFC3339)
 	}
 	return s
 }
