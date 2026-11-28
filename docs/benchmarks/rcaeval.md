@@ -3,7 +3,8 @@
 [RCAEval](https://github.com/phamquiluan/RCAEval) (MIT) publishes 735 labelled failure cases
 from real microservice testbeds (Online Boutique, Sock Shop, Train Ticket) and a scorer that
 works with any method. It's the held-out test for logpipe's root-cause analysis: none of its
-heuristics were tuned on these cases.
+heuristics were tuned on these cases, except RE3-OB's, which the graph's call factor was set
+against.
 
 ## What can be scored
 
@@ -12,7 +13,7 @@ logpipe reads **logs only**, so:
 | Suite | Logs? | Usable |
 |---|---|---|
 | RE1 (375 cases) | no, metrics only | ✗ |
-| RE2 (270): cpu, mem, disk, delay, loss, socket faults | yes | ✓ but resource faults leave few log traces |
+| RE2 (270): cpu, mem, disk, delay, loss, socket faults | yes, but the faults show in metrics | ✗ not reported |
 | RE3 (90): code-level faults F1–F5 | OB and TT; not SS | ✓ the fair test |
 
 Only the **service level** is scored. The indicator level (`checkoutservice_cpu`) needs metrics.
@@ -74,6 +75,18 @@ reports. The runs used a Claude Code login, not an API key.
 | rules + Gemini | 0.78 | 0.93 | 0.73 | 0.73 | 0.97 |
 | Claude Code + `ask` | 0.60 | 1.00 | 1.00 | 1.00 | 1.00 |
 | Claude Code, raw | 0.67 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+## Results: RE3-TT
+
+30 code faults (F1–F4) on Train Ticket, run 27 Nov on the current code; no setting was tuned
+on them. Rules + graph from traces (`--traces`) + Gemini (web chat,
+`--label-with-rules --llm llm:web:gemini`):
+
+| AC@1 | AC@3 | AC@5 | Avg@5 | time / case | tokens in / out |
+|---|---|---|---|---|---|
+| **1.00** | 1.00 | 1.00 | **1.00** | 275 s | ~18k / 5.9k |
+
+Every case is right first, with or without the graph.
 
 ## Findings
 

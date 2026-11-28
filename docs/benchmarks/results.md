@@ -133,6 +133,10 @@ this is a fit, not a held-out score. That's why the RCAEval results below matter
 The first four rows were run on 12 Nov, before `settle()` and later RCA changes; compare the
 26 Nov rows with the [component graph](#component-graph) runs of the same day, not with them.
 
+**Held out**: RE3-TT, 30 code faults on Train Ticket, run 27 Nov, nothing tuned on it. Rules +
+graph from traces + Gemini: AC@1 1.00, AC@3 1.00, AC@5 1.00, Avg@5 1.00
+([details](rcaeval.md#results-re3-tt)).
+
 ## Component graph
 
 `logpipe eval graph`, run 2026-11-25 ([how it works](../architecture/graph.md)). The shop with
@@ -240,7 +244,7 @@ is an upper bound, not a fair baseline.
 perfect there. On RE3-OB nothing is learnable from logs, but traces give the links and the
 calls on them. Dependency questions and RCA improve; with Gemini the gain is small and within noise. The
 call factor's thresholds and the failing-caller rule were set while looking at these 30 cases,
-so treat 0.77 as an optimistic fit: RE3-TT and RE2 are the held-out check. The LLM-only baseline's prompt carries
+so treat 0.77 as an optimistic fit; the held-out sets are [above](#rca-on-rcaeval-real-testbeds). The LLM-only baseline's prompt carries
 wall-clock timestamps, so it can't be replayed; it was recorded once.
 
 ## Nightly gate baseline
